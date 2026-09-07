@@ -239,12 +239,11 @@ const Index = ({ sport = 'football' }: IndexProps) => {
     : games;
 
   const hotGames = sortGamesByKickoffTime(
-    filteredGames.filter((g) => g.isHot && g.status !== "finished")
+    filteredGames.filter((g) => g.isHot && g.status !== "finished" && isFutureKickoff(g.time))
   );
   const upcomingGames = sortGamesByKickoffTime(
     filteredGames.filter((g) => (
-      g.status === "upcoming" &&
-      (isFutureKickoff(g.time) || !isApiManagedGame(g.id))
+      g.status === "upcoming" && isFutureKickoff(g.time)
     ))
   );
   const liveGames = filteredGames.filter((g) => g.status === "live");

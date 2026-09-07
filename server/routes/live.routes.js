@@ -160,6 +160,10 @@ function isUpcomingStatus(short) {
   return ['NS', 'TBD', 'PST'].includes(String(short || '').toUpperCase());
 }
 
+function isAutoManagedApiGameId(gameId) {
+  return /^(af|ab|bb|tn|ck|bx)-/i.test(String(gameId || ''));
+}
+
 function isLiveStatus(short) {
   const normalized = String(short || '').toUpperCase();
   return !!normalized && !isUpcomingStatus(normalized) && !isFinishedStatus(normalized);
@@ -346,16 +350,18 @@ router.get('/sync', async (req, res) => {
       if (id) liveMap[id] = f;
     }
 
-    // Step 2: load af-* games from DB that are live or upcoming
-    const { data: dbGames, error: dbError } = await supabase
+    // Step 2: only API-managed games are auto-synced. Manual/admin-added games must
+    // remain in the admin list after kickoff and must not be cleared or finished by
+    // the API-Football cleanup loop.
+    const { data: allGames, error: dbError } = await supabase
       .from('games')
-      .select('id, game_id, status, time, kickoff_start_time, game_paused, kickoff_paused_at')
-      .like('game_id', 'af-%')
-      .in('status', ['live', 'upcoming']);
+      .select('id, game_id, status, time, kickoff_start_time, game_paused, kickoff_paused_at');
 
     if (dbError) {
       return res.status(500).json({ success: false, message: dbError.message });
     }
+
+    const dbGames = (allGames || []).filter((g) => isAutoManagedApiGameId(g.game_id) && ['live', 'upcoming'].includes(g.status));
 
     const overdueDates = Array.from(new Set(
       (dbGames || [])

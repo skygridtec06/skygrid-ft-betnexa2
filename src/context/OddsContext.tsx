@@ -77,7 +77,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   const mergePendingLocalGames = useCallback((serverGames: GameOdds[]) => {
     const merged = new Map<string, GameOdds>();
     for (const game of serverGames) {
-      merged.set(game.id, game);
+      if (game?.id) merged.set(game.id, game);
     }
 
     const now = Date.now();
@@ -92,6 +92,17 @@ export function OddsProvider({ children }: { children: ReactNode }) {
         merged.set(gameId, pending.game);
       } else {
         merged.set(gameId, { ...existing, ...pending.game });
+      }
+    }
+
+    for (const localGame of gamesRef.current) {
+      if (!localGame?.id) continue;
+      const isApiManaged = /^(af|ab|bb|tn|ck|bx)-/i.test(String(localGame.id || ''));
+      if (isApiManaged) continue;
+      if (!merged.has(localGame.id)) {
+        merged.set(localGame.id, localGame);
+      } else {
+        merged.set(localGame.id, { ...merged.get(localGame.id), ...localGame });
       }
     }
 

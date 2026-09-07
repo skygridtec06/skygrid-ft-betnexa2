@@ -593,49 +593,151 @@ async function settleBetsForGame(gameId, game) {
 
 // Helper function to generate default markets for a new game
 function generateDefaultMarkets(gameUUID, homeOdds, drawOdds, awayOdds) {
-  // Ensure minimum odds of 1.10 to avoid 0 or NaN in any market
   const h = Math.max(1.10, parseFloat(homeOdds) || 2.00);
   const d = Math.max(1.10, parseFloat(drawOdds) || 3.00);
   const a = Math.max(1.10, parseFloat(awayOdds) || 3.00);
 
-  // Helper: clamp odds to minimum 1.01
-  const safeOdds = (v) => {
-    const n = parseFloat(v);
-    return +(isNaN(n) || n < 1.01 ? (1.50 + Math.random() * 1.5) : n).toFixed(2);
+  const clampOdds = (value, min = 1.05, max = 101) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return min;
+    return Number(Math.min(Math.max(numeric, min), max).toFixed(2));
   };
 
+  const poissonPMF = (k, lambda) => {
+    if (k < 0 || lambda < 0) return 0;
+    if (lambda === 0) return k === 0 ? 1 : 0;
+    let logP = -lambda + k * Math.log(lambda);
+    for (let i = 2; i <= k; i++) logP -= Math.log(i);
+    return Math.exp(logP);
+  };
+
+  const oddsFromProbability = (probability, margin = 1.08, maxOdds = 101) => {
+    if (!Number.isFinite(probability) || probability <= 0) return 1.05;
+    const safeProbability = Math.max(probability, 0.011);
+    return clampOdds((margin / safeProbability), 1.05, maxOdds);
+  };
+
+  const fitExpectedGoals = () => {
+    const rH = 1 / Math.max(h, 1.01);
+    const rD = 1 / Math.max(d, 1.01);
+    const rA = 1 / Math.max(a, 1.01);
+    const total = rH + rD + rA;
+    const pH = rH / total;
+    const pD = rD / total;
+    const pA = rA / total;
+    const ratio = Math.sqrt(Math.max(pH / Math.max(pA, 0.01), 0.01));
+
+    let lo = 0.3;
+    let hi = 9.0;
+    for (let iter = 0; iter < 45; iter++) {
+      const totalGoals = (lo + hi) / 2;
+      const lambdaH = totalGoals * ratio / (1 + ratio);
+      const lambdaA = totalGoals / (1 + ratio);
+      let drawProb = 0;
+      for (let k = 0; k <= 9; k++) {
+        drawProb += poissonPMF(k, lambdaH) * poissonPMF(k, lambdaA);
+      }
+      if (drawProb > pD) lo = totalGoals;
+      else hi = totalGoals;
+    }
+
+    const totalGoals = (lo + hi) / 2;
+    return {
+      lambdaH: totalGoals * ratio / (1 + ratio),
+      lambdaA: totalGoals / (1 + ratio),
+    };
+  };
+
+  const buildScoreMatrix = (lambdaH, lambdaA, maxGoals = 4) => {
+    const matrix = [];
+    for (let homeGoals = 0; homeGoals <= maxGoals; homeGoals++) {
+      const pmfH = poissonPMF(homeGoals, lambdaH);
+      if (pmfH < 1e-9) continue;
+      for (let awayGoals = 0; awayGoals <= maxGoals; awayGoals++) {
+        const pmfA = poissonPMF(awayGoals, lambdaA);
+        if (pmfA < 1e-9) continue;
+        matrix.push({ home: homeGoals, away: awayGoals, probability: pmfH * pmfA });
+      }
+    }
+    return matrix;
+  };
+
+  const { lambdaH, lambdaA } = fitExpectedGoals();
+  const matrix = buildScoreMatrix(lambdaH, lambdaA, 4);
+
   const markets = [];
+  let homeWin = 0;
+  let draw = 0;
+  let awayWin = 0;
+  let bttsYes = 0;
+  let over15 = 0;
+  let over25 = 0;
+  const exactScores = {};
 
-  // BTTS markets
-  markets.push({ game_id: gameUUID, market_type: 'BTTS', market_key: 'bttsYes', odds: safeOdds(1.6 + Math.random() * 0.5) });
-  markets.push({ game_id: gameUUID, market_type: 'BTTS', market_key: 'bttsNo', odds: safeOdds(2.0 + Math.random() * 0.5) });
+  for (const outcome of matrix) {
+    const totalGoals = outcome.home + outcome.away;
+    if (outcome.home > outcome.away) homeWin += outcome.probability;
+    else if (outcome.home === outcome.away) draw += outcome.probability;
+    else awayWin += outcome.probability;
 
-  // Over/Under
-  markets.push({ game_id: gameUUID, market_type: 'O/U', market_key: 'over25', odds: safeOdds(1.7 + Math.random() * 0.6) });
-  markets.push({ game_id: gameUUID, market_type: 'O/U', market_key: 'under25', odds: safeOdds(1.9 + Math.random() * 0.5) });
-  markets.push({ game_id: gameUUID, market_type: 'O/U', market_key: 'over15', odds: safeOdds(1.2 + Math.random() * 0.3) });
-  markets.push({ game_id: gameUUID, market_type: 'O/U', market_key: 'under15', odds: safeOdds(3.5 + Math.random() * 1.0) });
+    if (outcome.home > 0 && outcome.away > 0) bttsYes += outcome.probability;
+    if (totalGoals > 1.5) over15 += outcome.probability;
+    if (totalGoals > 2.5) over25 += outcome.probability;
 
-  // Double Chance
-  markets.push({ game_id: gameUUID, market_type: 'DC', market_key: 'doubleChanceHomeOrDraw', odds: safeOdds(1 / (1/h + 1/d) * 0.9) });
-  markets.push({ game_id: gameUUID, market_type: 'DC', market_key: 'doubleChanceAwayOrDraw', odds: safeOdds(1 / (1/a + 1/d) * 0.9) });
-  markets.push({ game_id: gameUUID, market_type: 'DC', market_key: 'doubleChanceHomeOrAway', odds: safeOdds(1 / (1/h + 1/a) * 0.9) });
+    const key = `cs${outcome.home}${outcome.away}`;
+    exactScores[key] = (exactScores[key] || 0) + outcome.probability;
+  }
 
-  // Half Time / Full Time
-  markets.push({ game_id: gameUUID, market_type: 'HT/FT', market_key: 'htftHomeHome', odds: safeOdds(h * 1.8) });
-  markets.push({ game_id: gameUUID, market_type: 'HT/FT', market_key: 'htftDrawDraw', odds: safeOdds(d * 2.0) });
-  markets.push({ game_id: gameUUID, market_type: 'HT/FT', market_key: 'htftAwayAway', odds: safeOdds(a * 1.8) });
-  markets.push({ game_id: gameUUID, market_type: 'HT/FT', market_key: 'htftDrawHome', odds: safeOdds(d * h * 0.7) });
-  markets.push({ game_id: gameUUID, market_type: 'HT/FT', market_key: 'htftDrawAway', odds: safeOdds(d * a * 0.7) });
+  markets.push({ game_id: gameUUID, market_type: 'BTTS', market_key: 'bttsYes', odds: oddsFromProbability(bttsYes) });
+  markets.push({ game_id: gameUUID, market_type: 'BTTS', market_key: 'bttsNo', odds: oddsFromProbability(1 - bttsYes) });
+  markets.push({ game_id: gameUUID, market_type: 'O/U', market_key: 'over15', odds: oddsFromProbability(over15) });
+  markets.push({ game_id: gameUUID, market_type: 'O/U', market_key: 'under15', odds: oddsFromProbability(1 - over15) });
+  markets.push({ game_id: gameUUID, market_type: 'O/U', market_key: 'over25', odds: oddsFromProbability(over25) });
+  markets.push({ game_id: gameUUID, market_type: 'O/U', market_key: 'under25', odds: oddsFromProbability(1 - over25) });
+  markets.push({ game_id: gameUUID, market_type: 'DC', market_key: 'doubleChanceHomeOrDraw', odds: oddsFromProbability(homeWin + draw, 1.05, 25) });
+  markets.push({ game_id: gameUUID, market_type: 'DC', market_key: 'doubleChanceAwayOrDraw', odds: oddsFromProbability(awayWin + draw, 1.05, 25) });
+  markets.push({ game_id: gameUUID, market_type: 'DC', market_key: 'doubleChanceHomeOrAway', odds: oddsFromProbability(homeWin + awayWin, 1.05, 25) });
 
-  // Correct Scores
-  for (let hScore = 0; hScore <= 4; hScore++) {
-    for (let aScore = 0; aScore <= 4; aScore++) {
+  const firstHalfFactor = 0.5;
+  const secondHalfFactor = 0.5;
+  const firstHalfMatrix = buildScoreMatrix(lambdaH * firstHalfFactor, lambdaA * firstHalfFactor, 4);
+  const secondHalfMatrix = buildScoreMatrix(lambdaH * secondHalfFactor, lambdaA * secondHalfFactor, 4);
+
+  let hh = 0; let dd = 0; let aa = 0; let dh = 0; let da = 0;
+  for (const firstHalf of firstHalfMatrix) {
+    const halftimeHome = firstHalf.home;
+    const halftimeAway = firstHalf.away;
+    const halftimeProb = firstHalf.probability;
+    const halftimeResult = halftimeHome > halftimeAway ? 'H' : halftimeHome === halftimeAway ? 'D' : 'A';
+
+    for (const secondHalf of secondHalfMatrix) {
+      const fullTimeHome = halftimeHome + secondHalf.home;
+      const fullTimeAway = halftimeAway + secondHalf.away;
+      const probability = halftimeProb * secondHalf.probability;
+      const fullTimeResult = fullTimeHome > fullTimeAway ? 'H' : fullTimeHome === fullTimeAway ? 'D' : 'A';
+
+      if (halftimeResult === 'H' && fullTimeResult === 'H') hh += probability;
+      if (halftimeResult === 'D' && fullTimeResult === 'D') dd += probability;
+      if (halftimeResult === 'A' && fullTimeResult === 'A') aa += probability;
+      if (halftimeResult === 'D' && fullTimeResult === 'H') dh += probability;
+      if (halftimeResult === 'D' && fullTimeResult === 'A') da += probability;
+    }
+  }
+
+  markets.push({ game_id: gameUUID, market_type: 'HT/FT', market_key: 'htftHomeHome', odds: oddsFromProbability(hh, 1.08, 101) });
+  markets.push({ game_id: gameUUID, market_type: 'HT/FT', market_key: 'htftDrawDraw', odds: oddsFromProbability(dd, 1.08, 101) });
+  markets.push({ game_id: gameUUID, market_type: 'HT/FT', market_key: 'htftAwayAway', odds: oddsFromProbability(aa, 1.08, 101) });
+  markets.push({ game_id: gameUUID, market_type: 'HT/FT', market_key: 'htftDrawHome', odds: oddsFromProbability(dh, 1.08, 101) });
+  markets.push({ game_id: gameUUID, market_type: 'HT/FT', market_key: 'htftDrawAway', odds: oddsFromProbability(da, 1.08, 101) });
+
+  for (let scoreHome = 0; scoreHome <= 4; scoreHome++) {
+    for (let scoreAway = 0; scoreAway <= 4; scoreAway++) {
+      const key = `cs${scoreHome}${scoreAway}`;
       markets.push({
         game_id: gameUUID,
         market_type: 'CS',
-        market_key: `cs${hScore}${aScore}`,
-        odds: safeOdds(3.0 + Math.random() * 20)
+        market_key: key,
+        odds: oddsFromProbability(exactScores[key] || 0, 1.08, 101)
       });
     }
   }
@@ -1104,29 +1206,36 @@ router.post('/games', checkAdmin, async (req, res) => {
       away_team: game.away_team,
     });
 
-    // Now insert only the markets the admin explicitly provided
+    // Insert realistic market coverage for manual games so they behave like regular fixtures
+    // and remain visible until the admin marks them live.
     let savedMarketsObj = {};
     try {
       console.log('📊 Handling markets for new game');
       let marketsToInsert = [];
+      const suppliedMarkets = (markets && typeof markets === 'object') ? markets : {};
+      const shouldGenerateMarkets = req.body.generateMarkets || req.body.mode === 'nel' || Object.keys(suppliedMarkets).length === 0;
+      const generatedMarkets = shouldGenerateMarkets ? generateDefaultMarkets(game.id, game.home_odds, game.draw_odds, game.away_odds) : [];
+      const mergedMarkets = {};
 
-      if (markets && typeof markets === 'object' && Object.keys(markets).length > 0) {
-        for (const [key, odds] of Object.entries(markets)) {
-          const parsed = parseFloat(odds);
-          if (parsed && parsed >= 1.01) {
-            marketsToInsert.push({
-              game_id: game.id,
-              market_type: determineMarketType(key),
-              market_key: key,
-              odds: parsed
-            });
-            savedMarketsObj[key] = parsed;
-          }
-        }
-        console.log(`   📝 Saving ${marketsToInsert.length} custom markets (blank markets left empty)`);
-      } else {
-        console.log('   ℹ️ No markets provided — all markets left blank for admin to fill later');
+      for (const market of generatedMarkets) {
+        mergedMarkets[market.market_key] = market.odds;
       }
+      for (const [key, odds] of Object.entries(suppliedMarkets)) {
+        const parsed = parseFloat(odds);
+        if (parsed && parsed >= 1.01) mergedMarkets[key] = parsed;
+      }
+
+      for (const [key, odds] of Object.entries(mergedMarkets)) {
+        marketsToInsert.push({
+          game_id: game.id,
+          market_type: determineMarketType(key),
+          market_key: key,
+          odds: parseFloat(odds)
+        });
+        savedMarketsObj[key] = parseFloat(odds);
+      }
+
+      console.log(`   📝 Saving ${marketsToInsert.length} market rows for game ${game.game_id}`);
 
       if (marketsToInsert.length > 0) {
         const { error: marketError } = await supabase

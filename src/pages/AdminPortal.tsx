@@ -46,6 +46,9 @@ const isVisibleToUsers = (game: GameOdds) =>
   game.status === 'live' ||
   (game.status === 'upcoming' && (isFutureKickoff(game.time) || !isApiGameId(game.id)));
 
+const isVisibleInAdminPanel = (game: GameOdds) =>
+  game.status === 'live' || game.status === 'upcoming' || game.status === 'finished';
+
 // Helper function to sort games by upcoming kickoff time (closest first)
 const sortGamesByKickoffTime = (gamesToSort: any[]) => {
   return [...gamesToSort].sort((a, b) => {
@@ -279,6 +282,9 @@ const AdminPortal = () => {
   });
   const [transactionActionInProgress, setTransactionActionInProgress] = useState<string | null>(null);
   const [userTransactionsLoading, setUserTransactionsLoading] = useState(false);
+  const [manualGameMode, setManualGameMode] = useState<'fixture' | 'nel'>('fixture');
+  const [apiGamesExpanded, setApiGamesExpanded] = useState(false);
+  const [finishedGamesExpanded, setFinishedGamesExpanded] = useState(false);
   const [newGame, setNewGame] = useState<{
     league: string;
     homeTeam: string;
@@ -857,6 +863,157 @@ const AdminPortal = () => {
     }
   };
 
+  const buildRealisticMarketsFromOdds = (homeOdds: number, drawOdds: number, awayOdds: number) => {
+    const h = Math.max(1.1, Number(homeOdds) || 2.0);
+    const d = Math.max(1.1, Number(drawOdds) || 3.0);
+    const a = Math.max(1.1, Number(awayOdds) || 3.0);
+
+    const clampOdds = (value: number, min = 1.05, max = 101) => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return min;
+      return Math.min(Math.max(numeric, min), max);
+    };
+
+    const poissonPMF = (k: number, lambda: number) => {
+      if (k < 0 || lambda < 0) return 0;
+      if (lambda === 0) return k === 0 ? 1 : 0;
+      let logP = -lambda + k * Math.log(lambda);
+      for (let i = 2; i <= k; i++) logP -= Math.log(i);
+      return Math.exp(logP);
+    };
+
+    const oddsFromProbability = (probability: number, margin = 1.08, maxOdds = 101) => {
+      if (!Number.isFinite(probability) || probability <= 0) return 1.05;
+      const safeProbability = Math.max(probability, 0.011);
+      return clampOdds((margin / safeProbability), 1.05, maxOdds);
+    };
+
+    const fitExpectedGoals = () => {
+      const rH = 1 / Math.max(h, 1.01);
+      const rD = 1 / Math.max(d, 1.01);
+      const rA = 1 / Math.max(a, 1.01);
+      const total = rH + rD + rA;
+      const pH = rH / total;
+      const pD = rD / total;
+      const pA = rA / total;
+      const ratio = Math.sqrt(Math.max(pH / Math.max(pA, 0.01), 0.01));
+
+      let lo = 0.3;
+      let hi = 9.0;
+      for (let iter = 0; iter < 45; iter++) {
+        const totalGoals = (lo + hi) / 2;
+        const lambdaH = totalGoals * ratio / (1 + ratio);
+        const lambdaA = totalGoals / (1 + ratio);
+        let drawProb = 0;
+        for (let k = 0; k <= 9; k++) {
+          drawProb += poissonPMF(k, lambdaH) * poissonPMF(k, lambdaA);
+        }
+        if (drawProb > pD) lo = totalGoals;
+        else hi = totalGoals;
+      }
+
+      const totalGoals = (lo + hi) / 2;
+      return {
+        lambdaH: totalGoals * ratio / (1 + ratio),
+        lambdaA: totalGoals / (1 + ratio),
+      };
+    };
+
+    const buildScoreMatrix = (lambdaH: number, lambdaA: number, maxGoals = 4) => {
+      const matrix: Array<{ home: number; away: number; probability: number }> = [];
+      for (let homeGoals = 0; homeGoals <= maxGoals; homeGoals++) {
+        const pmfH = poissonPMF(homeGoals, lambdaH);
+        if (pmfH < 1e-9) continue;
+        for (let awayGoals = 0; awayGoals <= maxGoals; awayGoals++) {
+          const pmfA = poissonPMF(awayGoals, lambdaA);
+          if (pmfA < 1e-9) continue;
+          matrix.push({ home: homeGoals, away: awayGoals, probability: pmfH * pmfA });
+        }
+      }
+      return matrix;
+    };
+
+    const { lambdaH, lambdaA } = fitExpectedGoals();
+    const matrix = buildScoreMatrix(lambdaH, lambdaA, 4);
+
+    let homeWin = 0;
+    let draw = 0;
+    let awayWin = 0;
+    let bttsYes = 0;
+    let over15 = 0;
+    let over25 = 0;
+    const exactScores: Record<string, number> = {};
+
+    for (const outcome of matrix) {
+      const totalGoals = outcome.home + outcome.away;
+      if (outcome.home > outcome.away) homeWin += outcome.probability;
+      else if (outcome.home === outcome.away) draw += outcome.probability;
+      else awayWin += outcome.probability;
+
+      if (outcome.home > 0 && outcome.away > 0) bttsYes += outcome.probability;
+      if (totalGoals > 1.5) over15 += outcome.probability;
+      if (totalGoals > 2.5) over25 += outcome.probability;
+
+      exactScores[`cs${outcome.home}${outcome.away}`] = (exactScores[`cs${outcome.home}${outcome.away}`] || 0) + outcome.probability;
+    }
+
+    const markets: Record<string, number> = {
+      home: clampOdds(h, 1.05, 101),
+      draw: clampOdds(d, 1.05, 101),
+      away: clampOdds(a, 1.05, 101),
+      bttsYes: oddsFromProbability(bttsYes),
+      bttsNo: oddsFromProbability(1 - bttsYes),
+      over15: oddsFromProbability(over15),
+      under15: oddsFromProbability(1 - over15),
+      over25: oddsFromProbability(over25),
+      under25: oddsFromProbability(1 - over25),
+      doubleChanceHomeOrDraw: oddsFromProbability(homeWin + draw, 1.05, 25),
+      doubleChanceAwayOrDraw: oddsFromProbability(awayWin + draw, 1.05, 25),
+      doubleChanceHomeOrAway: oddsFromProbability(homeWin + awayWin, 1.05, 25),
+    };
+
+    for (let scoreHome = 0; scoreHome <= 4; scoreHome++) {
+      for (let scoreAway = 0; scoreAway <= 4; scoreAway++) {
+        const key = `cs${scoreHome}${scoreAway}`;
+        markets[key] = oddsFromProbability(exactScores[key] || 0, 1.08, 101);
+      }
+    }
+
+    const firstHalfFactor = 0.5;
+    const secondHalfFactor = 0.5;
+    const firstHalfMatrix = buildScoreMatrix(lambdaH * firstHalfFactor, lambdaA * firstHalfFactor, 4);
+    const secondHalfMatrix = buildScoreMatrix(lambdaH * secondHalfFactor, lambdaA * secondHalfFactor, 4);
+
+    let hh = 0; let dd = 0; let aa = 0; let dh = 0; let da = 0;
+    for (const firstHalf of firstHalfMatrix) {
+      const halftimeHome = firstHalf.home;
+      const halftimeAway = firstHalf.away;
+      const halftimeProb = firstHalf.probability;
+      const halftimeResult = halftimeHome > halftimeAway ? 'H' : halftimeHome === halftimeAway ? 'D' : 'A';
+
+      for (const secondHalf of secondHalfMatrix) {
+        const fullTimeHome = halftimeHome + secondHalf.home;
+        const fullTimeAway = halftimeAway + secondHalf.away;
+        const probability = halftimeProb * secondHalf.probability;
+        const fullTimeResult = fullTimeHome > fullTimeAway ? 'H' : fullTimeHome === fullTimeAway ? 'D' : 'A';
+
+        if (halftimeResult === 'H' && fullTimeResult === 'H') hh += probability;
+        if (halftimeResult === 'D' && fullTimeResult === 'D') dd += probability;
+        if (halftimeResult === 'A' && fullTimeResult === 'A') aa += probability;
+        if (halftimeResult === 'D' && fullTimeResult === 'H') dh += probability;
+        if (halftimeResult === 'D' && fullTimeResult === 'A') da += probability;
+      }
+    }
+
+    markets.htftHomeHome = oddsFromProbability(hh, 1.08, 101);
+    markets.htftDrawDraw = oddsFromProbability(dd, 1.08, 101);
+    markets.htftAwayAway = oddsFromProbability(aa, 1.08, 101);
+    markets.htftDrawHome = oddsFromProbability(dh, 1.08, 101);
+    markets.htftDrawAway = oddsFromProbability(da, 1.08, 101);
+
+    return markets;
+  };
+
   const addGameHandler = async () => {
     if (!newGame.homeTeam || !newGame.awayTeam) return;
     
@@ -872,15 +1029,9 @@ const AdminPortal = () => {
     const d = parseFloat(newGame.drawOdds) || 3.0;
     const a = parseFloat(newGame.awayOdds) || 3.0;
 
-    // Build markets object from form input (no auto-generation)
-    const markets: Record<string, number> = {};
+    const generatedMarkets = buildRealisticMarketsFromOdds(h, d, a);
+    const markets: Record<string, number> = { ...generatedMarkets };
     
-    // Add 1X2 odds (always included)
-    if (h) markets.home = h;
-    if (d) markets.draw = d;
-    if (a) markets.away = a;
-    
-    // Add all user-entered market odds (only if they entered a value)
     for (const [key, value] of Object.entries(newGame.markets)) {
       const numValue = parseFloat(value as string);
       if (numValue && numValue > 0) {
@@ -902,7 +1053,9 @@ const AdminPortal = () => {
           awayOdds: a,
           time: kickoffTime,
           status: newGame.status,
-          markets
+          markets,
+          mode: manualGameMode,
+          generateMarkets: true
         })
       });
 
@@ -1316,7 +1469,7 @@ const AdminPortal = () => {
     }]);
   };
 
-  const isApiManagedGame = (gameId: string) => gameId?.startsWith('af-');
+  const isApiManagedGame = (gameId: string) => /^(af|ab|bb|tn|ck|bx)-/i.test(String(gameId || ''));
 
   const ensureManualGame = (gameId: string) => {
     if (!isApiManagedGame(gameId)) return true;
@@ -2527,8 +2680,11 @@ const AdminPortal = () => {
                 <Button variant="hero" size="sm" onClick={() => { setShowImageImport(!showImageImport); setShowAddGame(false); setImportResult(null); }}>
                   <ImageIcon className="mr-1 h-4 w-4" /> Import from Image
                 </Button>
-                <Button variant="hero" size="sm" onClick={() => { setShowAddGame(!showAddGame); setShowImageImport(false); }}>
+                <Button variant="hero" size="sm" onClick={() => { setManualGameMode('fixture'); setShowAddGame(prev => !prev); setShowImageImport(false); }}>
                   <Plus className="mr-1 h-4 w-4" /> Add Fixture
+                </Button>
+                <Button variant="hero" size="sm" onClick={() => { setManualGameMode('nel'); setShowAddGame(prev => !prev); setShowImageImport(false); }}>
+                  <Plus className="mr-1 h-4 w-4" /> Add Nel Games
                 </Button>
               </div>
             </div>
@@ -2679,8 +2835,14 @@ const AdminPortal = () => {
 
             {showAddGame && (
               <div className="mb-6 animate-fade-up rounded-xl border border-primary/30 bg-card p-6 neon-border">
-                <h4 className="mb-2 font-display text-sm font-bold uppercase text-foreground">New Fixture</h4>
-                <p className="mb-4 text-xs text-muted-foreground">Enter 1X2 odds and optionally set all other market odds. Leave market fields empty to skip them.</p>
+                <h4 className="mb-2 font-display text-sm font-bold uppercase text-foreground">
+                  {manualGameMode === 'nel' ? 'Add Nel Games' : 'New Fixture'}
+                </h4>
+                <p className="mb-4 text-xs text-muted-foreground">
+                  {manualGameMode === 'nel'
+                    ? 'Add a manual fixture with league, kick-off time, teams, and 1X2 odds. Realistic markets are generated automatically so the match behaves like a normal fixture.'
+                    : 'Enter 1X2 odds and optionally set all other market odds. Leave market fields empty to skip them.'}
+                </p>
                 
                 {/* Basic Game Info */}
                 <div className="mb-4 pb-4 border-b border-border/50">
@@ -2814,7 +2976,7 @@ const AdminPortal = () => {
             <div className="space-y-3">
               {/* ── Select-all / bulk-delete toolbar (upcoming + live games only) ── */}
               {(() => {
-                const selectableGames = sortGamesByKickoffTime(games).filter(g => g.status === 'upcoming' && isVisibleToUsers(g));
+                const selectableGames = sortGamesByKickoffTime(games).filter(g => g.status === 'upcoming' && isVisibleInAdminPanel(g));
                 const allSelected = selectableGames.length > 0 && selectableGames.every(g => markedGames.has(g.id));
                 const someSelected = markedGames.size > 0;
                 if (selectableGames.length === 0) return null;
@@ -2854,87 +3016,230 @@ const AdminPortal = () => {
                 );
               })()}
 
-              {sortGamesByKickoffTime(games.filter(isVisibleToUsers)).map((game) => (
-                <div key={game.id} className="rounded-xl border border-border/50 bg-card p-4">
-                  {isApiManagedGame(game.id) && (
-                    <div className="mb-3 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-medium text-blue-300">
-                      API-managed match. Scores, status and odds sync automatically from API-Football. Admin editing is disabled.
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between">
-                    {/* Checkbox — only for upcoming/live games */}
-                    {game.status === 'upcoming' && (
-                      <input
-                        type="checkbox"
-                        className="mr-3 h-4 w-4 flex-shrink-0 cursor-pointer accent-primary"
-                        checked={markedGames.has(game.id)}
-                        onChange={() => {
-                          const next = new Set(markedGames);
-                          next.has(game.id) ? next.delete(game.id) : next.add(game.id);
-                          setMarkedGames(next);
-                        }}
-                      />
-                    )}
-                    {game.status === 'finished' && <div className="mr-3 w-4 flex-shrink-0" />}
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">{game.league}</span>
-                        <Badge variant={game.status === "live" ? "live" : game.status === "finished" ? "secondary" : "default"} className="text-[10px]">
-                          {game.status}
-                        </Badge>
-                      </div>
-                      <p className="mt-1 text-sm font-semibold text-foreground">
-                        {game.homeTeam} vs {game.awayTeam}
-                      </p>
-                      <div className="mt-1 flex gap-3 text-xs text-muted-foreground">
-                        <span>1: <span className="font-mono font-bold text-primary">{game.homeOdds.toFixed(2)}</span></span>
-                        <span>X: <span className="font-mono font-bold text-primary">{game.drawOdds.toFixed(2)}</span></span>
-                        <span>2: <span className="font-mono font-bold text-primary">{game.awayOdds.toFixed(2)}</span></span>
-                        <span>📅 {game.time}</span>
-                      </div>
+              {(() => {
+                const visibleGames = sortGamesByKickoffTime(games.filter(isVisibleInAdminPanel));
+                const apiGames = visibleGames.filter((game) => isApiManagedGame(game.id));
+                const finishedGames = visibleGames.filter((game) => game.status === 'finished' && !isApiManagedGame(game.id));
+                const adminGames = visibleGames.filter((game) => !isApiManagedGame(game.id) && game.status !== 'finished');
 
-                      {/* Edit Game Details Button */}
-                      <div className="mt-2">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={isApiManagedGame(game.id)}
-                          onClick={() => {
-                            setEditingGameDetails(editingGameDetails === game.id ? null : game.id);
-                            if (editingGameDetails !== game.id) {
-                              // Safely parse the kickoff time
-                              let kickoffTimeStr = game.time || new Date().toISOString();
-                              try {
-                                // Try to parse as date
-                                const parsedDate = new Date(kickoffTimeStr);
-                                if (isNaN(parsedDate.getTime())) {
-                                  kickoffTimeStr = new Date().toISOString();
-                                }
-                              } catch (e) {
-                                kickoffTimeStr = new Date().toISOString();
-                              }
-                              
-                              // Initialize markets: start with ALL marketLabels keys + any DB values
-                              const dbMarkets = game.markets || {};
-                              const editableMarkets: Record<string, number> = { ...dbMarkets };
-                              // Ensure every marketLabels key exists in state so edits are tracked
-                              for (const k of Object.keys(marketLabels)) {
-                                if (editableMarkets[k] === undefined || editableMarkets[k] === null) {
-                                  // leave absent — will show as empty input
-                                } else {
-                                  editableMarkets[k] = editableMarkets[k]; // keep DB value
-                                }
-                              }
-                              
-                              setGameDetailsEdit({
-                                ...gameDetailsEdit,
-                                [game.id]: {
-                                  league: game.league,
-                                  homeTeam: game.homeTeam,
-                                  awayTeam: game.awayTeam,
-                                  homeOdds: game.homeOdds.toString(),
-                                  drawOdds: game.drawOdds.toString(),
-                                  awayOdds: game.awayOdds.toString(),
+                return (
+                  <>
+                    {finishedGames.length > 0 && (
+                      <div className="mb-4 overflow-hidden rounded-xl border border-border/50 bg-card">
+                        <button
+                          type="button"
+                          onClick={() => setFinishedGamesExpanded(!finishedGamesExpanded)}
+                          className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-muted/20"
+                        >
+                          <span className="font-display text-sm font-bold uppercase tracking-wide text-foreground">Finished Games</span>
+                          <span className="inline-flex items-center gap-2">
+                            <span className="rounded-full border border-border/60 bg-background/50 px-2 py-1 text-[10px] font-medium text-muted-foreground">
+                              {finishedGames.length}
+                            </span>
+                            <span className="text-lg text-muted-foreground">{finishedGamesExpanded ? '▾' : '▸'}</span>
+                          </span>
+                        </button>
+
+                        {finishedGamesExpanded && (
+                          <div className="space-y-3 border-t border-border/40 p-4">
+                            {finishedGames.map((game) => (
+                              <div key={game.id} className="rounded-lg border border-border/50 bg-background/40 p-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-muted-foreground">{game.league}</span>
+                                      <Badge variant="secondary" className="text-[10px]">{game.status}</Badge>
+                                    </div>
+                                    <p className="mt-1 text-sm font-semibold text-foreground">{game.homeTeam} vs {game.awayTeam}</p>
+                                    <div className="mt-1 flex gap-3 text-xs text-muted-foreground">
+                                      <span>1: <span className="font-mono font-bold text-primary">{game.homeOdds.toFixed(2)}</span></span>
+                                      <span>X: <span className="font-mono font-bold text-primary">{game.drawOdds.toFixed(2)}</span></span>
+                                      <span>2: <span className="font-mono font-bold text-primary">{game.awayOdds.toFixed(2)}</span></span>
+                                      <span>📅 {game.time}</span>
+                                    </div>
+                                  </div>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => {
+                                      setEditingGameDetails(editingGameDetails === game.id ? null : game.id);
+                                      if (editingGameDetails !== game.id) {
+                                        let kickoffTimeStr = game.time || new Date().toISOString();
+                                        try {
+                                          const parsedDate = new Date(kickoffTimeStr);
+                                          if (isNaN(parsedDate.getTime())) {
+                                            kickoffTimeStr = new Date().toISOString();
+                                          }
+                                        } catch (e) {
+                                          kickoffTimeStr = new Date().toISOString();
+                                        }
+
+                                        const dbMarkets = game.markets || {};
+                                        const editableMarkets: Record<string, number> = { ...dbMarkets };
+                                        for (const k of Object.keys(marketLabels)) {
+                                          if (editableMarkets[k] === undefined || editableMarkets[k] === null) {
+                                          } else {
+                                            editableMarkets[k] = editableMarkets[k];
+                                          }
+                                        }
+
+                                        setGameDetailsEdit({
+                                          ...gameDetailsEdit,
+                                          [game.id]: {
+                                            league: game.league,
+                                            homeTeam: game.homeTeam,
+                                            awayTeam: game.awayTeam,
+                                            homeOdds: game.homeOdds.toString(),
+                                            drawOdds: game.drawOdds.toString(),
+                                            awayOdds: game.awayOdds.toString(),
+                                            kickoffTime: kickoffTimeStr,
+                                            markets: editableMarkets
+                                          }
+                                        });
+                                      }
+                                    }}
+                                    className="text-xs"
+                                  >
+                                    <Edit2 className="mr-1 h-3 w-3" />
+                                    {editingGameDetails === game.id ? "Close Edit" : "Edit Details"}
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {apiGames.length > 0 && (
+                      <div className="mb-4 overflow-hidden rounded-xl border border-blue-500/30 bg-card">
+                        <button
+                          type="button"
+                          onClick={() => setApiGamesExpanded(!apiGamesExpanded)}
+                          className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-blue-500/5"
+                        >
+                          <span className="font-display text-sm font-bold uppercase tracking-wide text-blue-200">API GAMES</span>
+                          <span className="inline-flex items-center gap-2">
+                            <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-medium text-blue-200">
+                              {apiGames.length}
+                            </span>
+                            <span className="text-lg text-blue-200">{apiGamesExpanded ? '▾' : '▸'}</span>
+                          </span>
+                        </button>
+
+                        {apiGamesExpanded && (
+                          <div className="border-t border-blue-500/20 p-4">
+                            <div className="space-y-3">
+                              {apiGames.map((game) => (
+                                <div key={game.id} className="rounded-lg border border-border/40 bg-background/40 p-3">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs text-muted-foreground">{game.league}</span>
+                                        <Badge variant={game.status === "live" ? "live" : game.status === "finished" ? "secondary" : "default"} className="text-[10px]">
+                                          {game.status}
+                                        </Badge>
+                                      </div>
+                                      <p className="mt-1 truncate text-sm font-semibold text-foreground">
+                                        {game.homeTeam} vs {game.awayTeam}
+                                      </p>
+                                      <div className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                                        <span>1: <span className="font-mono font-bold text-primary">{game.homeOdds.toFixed(2)}</span></span>
+                                        <span>X: <span className="font-mono font-bold text-primary">{game.drawOdds.toFixed(2)}</span></span>
+                                        <span>2: <span className="font-mono font-bold text-primary">{game.awayOdds.toFixed(2)}</span></span>
+                                        <span>📅 {game.time}</span>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex shrink-0 items-center gap-2">
+                                      <button
+                                        type="button"
+                                        className="rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary/50 hover:text-foreground"
+                                        onClick={() => {
+                                          setEditingGameDetails(editingGameDetails === game.id ? null : game.id);
+                                        }}
+                                        disabled
+                                      >
+                                        Edit Details
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {adminGames.map((game) => (
+                      <div key={game.id} className="mb-4 rounded-xl border border-border/50 bg-card p-4">
+                        <div className="flex items-center justify-between">
+                          {game.status === 'upcoming' && (
+                            <input
+                              type="checkbox"
+                              className="mr-3 h-4 w-4 flex-shrink-0 cursor-pointer accent-primary"
+                              checked={markedGames.has(game.id)}
+                              onChange={() => {
+                                const next = new Set(markedGames);
+                                next.has(game.id) ? next.delete(game.id) : next.add(game.id);
+                                setMarkedGames(next);
+                              }}
+                            />
+                          )}
+                          {game.status === 'finished' && <div className="mr-3 w-4 flex-shrink-0" />}
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground">{game.league}</span>
+                              <Badge variant={game.status === "live" ? "live" : game.status === "finished" ? "secondary" : "default"} className="text-[10px]">
+                                {game.status}
+                              </Badge>
+                            </div>
+                            <p className="mt-1 text-sm font-semibold text-foreground">
+                              {game.homeTeam} vs {game.awayTeam}
+                            </p>
+                            <div className="mt-1 flex gap-3 text-xs text-muted-foreground">
+                              <span>1: <span className="font-mono font-bold text-primary">{game.homeOdds.toFixed(2)}</span></span>
+                              <span>X: <span className="font-mono font-bold text-primary">{game.drawOdds.toFixed(2)}</span></span>
+                              <span>2: <span className="font-mono font-bold text-primary">{game.awayOdds.toFixed(2)}</span></span>
+                              <span>📅 {game.time}</span>
+                            </div>
+
+                            <div className="mt-2">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setEditingGameDetails(editingGameDetails === game.id ? null : game.id);
+                                  if (editingGameDetails !== game.id) {
+                                    let kickoffTimeStr = game.time || new Date().toISOString();
+                                    try {
+                                      const parsedDate = new Date(kickoffTimeStr);
+                                      if (isNaN(parsedDate.getTime())) {
+                                        kickoffTimeStr = new Date().toISOString();
+                                      }
+                                    } catch (e) {
+                                      kickoffTimeStr = new Date().toISOString();
+                                    }
+
+                                    const dbMarkets = game.markets || {};
+                                    const editableMarkets: Record<string, number> = { ...dbMarkets };
+                                    for (const k of Object.keys(marketLabels)) {
+                                      if (editableMarkets[k] === undefined || editableMarkets[k] === null) {
+                                      } else {
+                                        editableMarkets[k] = editableMarkets[k];
+                                      }
+                                    }
+
+                                    setGameDetailsEdit({
+                                      ...gameDetailsEdit,
+                                      [game.id]: {
+                                        league: game.league,
+                                        homeTeam: game.homeTeam,
+                                        awayTeam: game.awayTeam,
+                                        homeOdds: game.homeOdds.toString(),
+                                        drawOdds: game.drawOdds.toString(),
+                                        awayOdds: game.awayOdds.toString(),
                                   kickoffTime: kickoffTimeStr,
                                   markets: editableMarkets
                                 }
@@ -3384,12 +3689,15 @@ const AdminPortal = () => {
 
                 </div>
               ))}
-              {games.length === 0 && (
-                <div className="rounded-xl border border-border/50 bg-card p-8 text-center text-muted-foreground">
-                  No games added yet. Click "Add Fixture" to get started.
-                </div>
-              )}
-            </div>
+                </>
+              );
+            })()}
+            {games.length === 0 && (
+              <div className="rounded-xl border border-border/50 bg-card p-8 text-center text-muted-foreground">
+                No games added yet. Click "Add Fixture" to get started.
+              </div>
+            )}
+          </div>
 
             {/* Delete API Games Section */}
             <div className="mt-12 space-y-4 rounded-xl border border-red-500/30 bg-red-500/5 p-6">
