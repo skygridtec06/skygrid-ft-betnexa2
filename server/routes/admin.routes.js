@@ -1169,6 +1169,9 @@ router.post('/games', checkAdmin, async (req, res) => {
 
     console.log('📤 Sending success response');
 
+    // Prevent CDN/proxy caches from serving stale game lists immediately after insert.
+    res.set('Cache-Control', 'no-store');
+
     // Send minimal response to avoid circular references
     res.status(200).json({ 
       success: true, 

@@ -72,6 +72,31 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   const gamesRef = useRef<GameOdds[]>(cachedGames);
   const kickoffTimesRef = useRef<Record<string, number>>({}); // Track when each game kicked off
   const fetchInProgressRef = useRef(false); // Prevent duplicate fetches
+  const pendingLocalGamesRef = useRef<Map<string, { game: GameOdds; createdAt: number }>>(new Map());
+
+  const mergePendingLocalGames = useCallback((serverGames: GameOdds[]) => {
+    const merged = new Map<string, GameOdds>();
+    for (const game of serverGames) {
+      merged.set(game.id, game);
+    }
+
+    const now = Date.now();
+    for (const [gameId, pending] of pendingLocalGamesRef.current.entries()) {
+      if (now - pending.createdAt > 60000) {
+        pendingLocalGamesRef.current.delete(gameId);
+        continue;
+      }
+
+      const existing = merged.get(gameId);
+      if (!existing) {
+        merged.set(gameId, pending.game);
+      } else {
+        merged.set(gameId, { ...existing, ...pending.game });
+      }
+    }
+
+    return Array.from(merged.values()).sort((a, b) => a.id.localeCompare(b.id));
+  }, []);
 
   const hasApiGamesNeedingSync = () => {
     const now = Date.now();
@@ -141,7 +166,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
             return true;
           });
           
-          const sortedGames = deduplicatedGames.sort((a, b) => a.id.localeCompare(b.id));
+          const sortedGames = mergePendingLocalGames(deduplicatedGames);
           setGames(sortedGames);
           gamesRef.current = sortedGames;
           // Save to localStorage cache for next page load
@@ -149,10 +174,20 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           setLoadError(null);
         } else {
           console.warn('⚠️ Invalid response format:', data);
+          const mergedPendingGames = mergePendingLocalGames(gamesRef.current);
+          if (mergedPendingGames.length > 0) {
+            setGames(mergedPendingGames);
+            gamesRef.current = mergedPendingGames;
+          }
           setLoadError(null); // Don't show error, just start with empty games
         }
       } else {
         console.warn('⚠️ API returned non-OK status:', response.status);
+        const mergedPendingGames = mergePendingLocalGames(gamesRef.current);
+        if (mergedPendingGames.length > 0) {
+          setGames(mergedPendingGames);
+          gamesRef.current = mergedPendingGames;
+        }
         setLoadError(null); // Don't block app from loading
       }
     } catch (error: any) {
@@ -473,11 +508,25 @@ export function OddsProvider({ children }: { children: ReactNode }) {
             return true;
           });
           
-          const sortedGames = deduplicatedGames.sort((a, b) => a.id.localeCompare(b.id));
+          const sortedGames = mergePendingLocalGames(deduplicatedGames);
           setGames(sortedGames);
           gamesRef.current = sortedGames;
           // Save to localStorage cache for next page load
           saveCachedGames(sortedGames);
+        } else {
+          const mergedPendingGames = mergePendingLocalGames(gamesRef.current);
+          if (mergedPendingGames.length > 0) {
+            setGames(mergedPendingGames);
+            gamesRef.current = mergedPendingGames;
+            saveCachedGames(mergedPendingGames);
+          }
+        }
+      } else {
+        const mergedPendingGames = mergePendingLocalGames(gamesRef.current);
+        if (mergedPendingGames.length > 0) {
+          setGames(mergedPendingGames);
+          gamesRef.current = mergedPendingGames;
+          saveCachedGames(mergedPendingGames);
         }
       }
     } catch (error: any) {
@@ -488,6 +537,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   };
 
   const addGame = (game: GameOdds) => {
+    pendingLocalGamesRef.current.set(game.id, { game, createdAt: Date.now() });
     setGames((prev) => {
       // Check for duplicates by ID
       if (prev.some(g => g.id === game.id)) {
@@ -504,6 +554,14 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   };
 
   const updateGame = (id: string, updates: Partial<GameOdds>) => {
+    const existingPending = pendingLocalGamesRef.current.get(id);
+    if (existingPending) {
+      pendingLocalGamesRef.current.set(id, {
+        game: { ...existingPending.game, ...updates },
+        createdAt: existingPending.createdAt,
+      });
+    }
+
     setGames((prev) => {
       const updated = prev.map((game) => {
         if (game.id === id) {
@@ -527,6 +585,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   };
 
   const removeGame = (id: string) => {
+    pendingLocalGamesRef.current.delete(id);
     setGames((prev) => {
       const updated = prev.filter((game) => game.id !== id);
       gamesRef.current = updated;

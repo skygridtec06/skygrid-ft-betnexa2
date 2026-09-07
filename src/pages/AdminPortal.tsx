@@ -978,8 +978,12 @@ const AdminPortal = () => {
         setShowAddGame(false);
         alert("✅ Game added with your custom market odds!");
         
-        // Refresh games to sync with all users
-        await refreshGames();
+        // Avoid an immediate refresh here: the new game is already in local state,
+        // and a stale GET /api/admin/games response can overwrite it and make the
+        // match disappear before the backend has finished propagating the insert.
+        window.setTimeout(() => {
+          void refreshGames();
+        }, 1500);
       } else {
         console.error('API Error:', data);
         alert(`Error: ${data.error || 'Failed to add game'}`);
