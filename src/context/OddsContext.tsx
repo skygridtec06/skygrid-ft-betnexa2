@@ -38,38 +38,11 @@ interface OddsContextType {
 
 const OddsContext = createContext<OddsContextType | undefined>(undefined);
 
-// Helper function to load cached games from localStorage
-const loadCachedGames = (): GameOdds[] => {
-  try {
-    const cached = localStorage.getItem('betnexa_games_cache');
-    if (cached) {
-      const parsed = JSON.parse(cached);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        console.log('📦 Loaded', parsed.length, 'cached games from localStorage');
-        return parsed;
-      }
-    }
-  } catch (error) {
-    console.warn('⚠️ Error loading cached games:', error);
-  }
-  return [];
-};
-
-// Helper function to save games to localStorage cache
-const saveCachedGames = (games: GameOdds[]): void => {
-  try {
-    localStorage.setItem('betnexa_games_cache', JSON.stringify(games));
-  } catch (error) {
-    console.warn('⚠️ Error saving games to cache:', error);
-  }
-};
-
 export function OddsProvider({ children }: { children: ReactNode }) {
-  const cachedGames = loadCachedGames();
-  const [games, setGames] = useState<GameOdds[]>(cachedGames);
-  const [isLoading, setIsLoading] = useState(cachedGames.length === 0); // Only loading if no cache
+  const [games, setGames] = useState<GameOdds[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const gamesRef = useRef<GameOdds[]>(cachedGames);
+  const gamesRef = useRef<GameOdds[]>([]);
   const kickoffTimesRef = useRef<Record<string, number>>({}); // Track when each game kicked off
   const fetchInProgressRef = useRef(false); // Prevent duplicate fetches
   const pendingLocalGamesRef = useRef<Map<string, { game: GameOdds; createdAt: number }>>(new Map());
@@ -180,8 +153,6 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           const sortedGames = mergePendingLocalGames(deduplicatedGames);
           setGames(sortedGames);
           gamesRef.current = sortedGames;
-          // Save to localStorage cache for next page load
-          saveCachedGames(sortedGames);
           setLoadError(null);
         } else {
           console.warn('⚠️ Invalid response format:', data);
@@ -209,6 +180,14 @@ export function OddsProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
       fetchInProgressRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.removeItem('betnexa_games_cache');
+    } catch (error) {
+      console.warn('⚠️ Unable to clear stale local game cache:', error);
     }
   }, []);
 
@@ -430,8 +409,6 @@ export function OddsProvider({ children }: { children: ReactNode }) {
                 const sortedGames = deduplicatedGames.sort((a, b) => a.id.localeCompare(b.id));
                 console.log(`✅ [MARKET UPDATE] Updated ${sortedGames.length} games with new market data`);
                 gamesRef.current = sortedGames;
-                // Save to localStorage cache after market updates
-                saveCachedGames(sortedGames);
                 return sortedGames;
               });
             }
@@ -522,14 +499,11 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           const sortedGames = mergePendingLocalGames(deduplicatedGames);
           setGames(sortedGames);
           gamesRef.current = sortedGames;
-          // Save to localStorage cache for next page load
-          saveCachedGames(sortedGames);
         } else {
           const mergedPendingGames = mergePendingLocalGames(gamesRef.current);
           if (mergedPendingGames.length > 0) {
             setGames(mergedPendingGames);
             gamesRef.current = mergedPendingGames;
-            saveCachedGames(mergedPendingGames);
           }
         }
       } else {
@@ -537,7 +511,6 @@ export function OddsProvider({ children }: { children: ReactNode }) {
         if (mergedPendingGames.length > 0) {
           setGames(mergedPendingGames);
           gamesRef.current = mergedPendingGames;
-          saveCachedGames(mergedPendingGames);
         }
       }
     } catch (error: any) {
@@ -558,8 +531,6 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       // Add new game and maintain stable sort by ID
       const updated = [...prev, game].sort((a, b) => a.id.localeCompare(b.id));
       gamesRef.current = updated;
-      // Save to cache after adding game
-      saveCachedGames(updated);
       return updated;
     });
   };
@@ -589,8 +560,6 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       // Maintain stable sort order by ID to prevent reranking issues
       const stableSorted = updated.sort((a, b) => a.id.localeCompare(b.id));
       gamesRef.current = stableSorted;
-      // Save to cache after updating game
-      saveCachedGames(stableSorted);
       return stableSorted;
     });
   };
@@ -600,8 +569,6 @@ export function OddsProvider({ children }: { children: ReactNode }) {
     setGames((prev) => {
       const updated = prev.filter((game) => game.id !== id);
       gamesRef.current = updated;
-      // Save to cache after removing game
-      saveCachedGames(updated);
       return updated;
     });
   };
