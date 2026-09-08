@@ -85,7 +85,8 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   const hasApiGamesNeedingSync = () => {
     const now = Date.now();
     return gamesRef.current.some((game) => {
-      if (!game.id?.startsWith('af-') || game.status === 'finished') return false;
+      const isApiManaged = /^(af|ab|bb|tn|ck|bx)-/i.test(String(game.id || ''));
+      if (!isApiManaged || game.status === 'finished') return false;
       if (game.status === 'live') return true;
       const kickoffMs = new Date(game.time).getTime();
       if (isNaN(kickoffMs)) return false;

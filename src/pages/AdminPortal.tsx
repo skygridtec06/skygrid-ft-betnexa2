@@ -40,11 +40,11 @@ const isFutureKickoff = (time: string) => {
   return !Number.isNaN(kickoffMs) && kickoffMs > Date.now();
 };
 
-const isApiGameId = (gameId: string) => /^(af|ab|bb|tn|ck|bx)-/i.test(gameId || '');
+const isApiGameId = (gameId: string) => /^(af|ab|bb|tn|ck|bx)-/i.test(String(gameId || ''));
 
 const isVisibleToUsers = (game: GameOdds) =>
   game.status === 'live' ||
-  (game.status === 'upcoming' && (isFutureKickoff(game.time) || !isApiGameId(game.id)));
+  (game.status === 'upcoming' && isFutureKickoff(game.time));
 
 const isVisibleInAdminPanel = (game: GameOdds) =>
   game.status === 'live' || game.status === 'upcoming' || game.status === 'finished';
@@ -53,22 +53,17 @@ const isVisibleInAdminPanel = (game: GameOdds) =>
 const sortGamesByKickoffTime = (gamesToSort: any[]) => {
   return [...gamesToSort].sort((a, b) => {
     try {
-      // First, prioritize admin-added matches over API-fetched matches
-      // API-managed games have game_id starting with 'af-' (from backend isApiManagedGameId check)
-      const isApiManagedA = a.game_id && String(a.game_id).startsWith('af-');
-      const isApiManagedB = b.game_id && String(b.game_id).startsWith('af-');
-      const isAdminAddedA = !isApiManagedA;  // Admin-added if NOT API-managed
+      // First, prioritize admin-added matches over API-fetched matches.
+      // API-managed fixtures use the sport prefixes used by the live sync service.
+      const isApiManagedA = isApiGameId(String(a.game_id || a.id || ''));
+      const isApiManagedB = isApiGameId(String(b.game_id || b.id || ''));
+      const isAdminAddedA = !isApiManagedA;
       const isAdminAddedB = !isApiManagedB;
-      
-      // Debug: Log first few games to verify sorting
-      if (gamesToSort.length > 0 && gamesToSort.indexOf(a) < 2) {
-        console.log(`[SORT] ${a.game_id || 'no-id'} (${a.homeTeam}) - isAdminAdded=${isAdminAddedA}, isApiManaged=${isApiManagedA}`);
-      }
-      
+
       if (isAdminAddedA && !isAdminAddedB) {
-        return -1; // Admin-added match A comes first
+        return -1;
       } else if (!isAdminAddedA && isAdminAddedB) {
-        return 1; // Admin-added match B comes first
+        return 1;
       }
       
       // Then, prioritize by status: live > upcoming > finished

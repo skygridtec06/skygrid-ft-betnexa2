@@ -96,7 +96,7 @@ function isValidUUID(str) {
 }
 
 function isApiManagedGameId(gameId) {
-  return /^af-\d+$/i.test(String(gameId || ''));
+  return /^(af|ab|bb|tn|ck|bx)-/i.test(String(gameId || ''));
 }
 
 async function sendWonSmsWithFallback({ userId, directPhone, betRef, amountWon }) {
