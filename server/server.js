@@ -105,6 +105,14 @@ app.use(cors({
   allowedHeaders: ['Accept', 'Content-Type', 'Authorization', 'X-Requested-With'],
   optionsSuccessStatus: 200
 }));
+
+// API responses contain user-specific data and must not be revalidated into
+// 304 responses that can omit CORS headers in browsers.
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
