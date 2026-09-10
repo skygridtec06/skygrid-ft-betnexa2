@@ -388,6 +388,10 @@ router.post('/fetch-preview', checkAdmin, async (req, res) => {
       }
 
       const json = await resp.json();
+      if (json?.errors && Object.keys(json.errors).length > 0) {
+        const providerError = Object.values(json.errors).join('; ');
+        throw new Error(`API-Football provider error: ${providerError}`);
+      }
       console.log(`   ✅ API Response received`);
       return json;
     }
