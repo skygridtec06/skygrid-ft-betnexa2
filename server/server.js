@@ -49,6 +49,18 @@ const envAllowedOrigins = (process.env.CORS_ORIGINS || '')
 
 const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...envAllowedOrigins])];
 
+const normalizeOrigin = (origin) => {
+  try {
+    const url = new URL(origin);
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    return `${url.protocol}//${hostname}${url.port ? `:${url.port}` : ''}`;
+  } catch {
+    return origin.trim().toLowerCase().replace(/^https?:\/\/www\./, 'https://');
+  }
+};
+
+const normalizedAllowedOrigins = new Set(allowedOrigins.map(normalizeOrigin));
+
 // Middleware
 app.use(cors({
   origin: (origin, callback) => {
@@ -58,19 +70,23 @@ app.use(cors({
       return callback(null, true);
     }
 
-    // Normalize origin for comparison (remove www for checking)
-    const normalizedOrigin = origin.replace('www.', '');
-    const normalizedAllowedOrigins = allowedOrigins.map(o => o.replace('www.', ''));
+    const normalizedOrigin = normalizeOrigin(origin);
 
     // Allow specific whitelisted origins (with normalization)
-    if (normalizedAllowedOrigins.includes(normalizedOrigin)) {
+    if (normalizedAllowedOrigins.has(normalizedOrigin)) {
       console.log(`[CORS] ✅ Origin allowed (in whitelist): ${origin}`);
       // Return the origin that was actually requested to satisfy credentials: true
       return callback(null, origin);
     }
 
-    // Allow all vercel.app subdomains (for preview deployments)
-    if (origin.includes('.vercel.app') || origin.includes('vercel.app')) {
+    // Allow Betnexa Vercel previews without allowing unrelated Vercel projects.
+    let hostname = '';
+    try {
+      hostname = new URL(origin).hostname.toLowerCase();
+    } catch {
+      hostname = '';
+    }
+    if (hostname.startsWith('betnexa') && hostname.endsWith('.vercel.app')) {
       console.log(`[CORS] ✅ Origin allowed (Vercel domain): ${origin}`);
       return callback(null, origin);
     }
@@ -86,7 +102,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Accept', 'Content-Type', 'Authorization', 'X-Requested-With'],
   optionsSuccessStatus: 200
 }));
 app.use(express.json({ limit: '50mb' }));
