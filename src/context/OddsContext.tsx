@@ -53,13 +53,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       if (game?.id) merged.set(game.id, game);
     }
 
-    const now = Date.now();
     for (const [gameId, pending] of pendingLocalGamesRef.current.entries()) {
-      if (now - pending.createdAt > 60000) {
-        pendingLocalGamesRef.current.delete(gameId);
-        continue;
-      }
-
       const existing = merged.get(gameId);
       if (!existing) {
         merged.set(gameId, pending.game);
@@ -154,6 +148,11 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           const sortedGames = mergePendingLocalGames(deduplicatedGames);
           setGames(sortedGames);
           gamesRef.current = sortedGames;
+          for (const gameId of pendingLocalGamesRef.current.keys()) {
+            if (deduplicatedGames.some((game) => game.id === gameId)) {
+              pendingLocalGamesRef.current.delete(gameId);
+            }
+          }
           setLoadError(null);
         } else {
           console.warn('⚠️ Invalid response format:', data);
@@ -598,7 +597,6 @@ export function useOdds() {
   }
   return context;
 }
-
 
 
 

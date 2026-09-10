@@ -5354,103 +5354,33 @@ const AdminPortal = () => {
           onClose={() => setShowFetchGamesModal(false)}
           onExecute={async (games) => {
             try {
-              const gamesEndpoint = buildApiUrl('/api/admin/games');
-              
-              // Step 1: Fetch existing games to check for duplicates
-              let existingGameIds = new Set<string>();
-              try {
-                const existingRes = await fetch(gamesEndpoint);
-                const existingData = await existingRes.json();
-                if (existingData.success && existingData.games) {
-                  for (const g of existingData.games) {
-                    // Check game_id for af- prefix (API Football sourced)
-                    if (g.game_id) existingGameIds.add(g.game_id);
-                    // Also check by team names + date to catch manually added duplicates
-                    const matchKey = `${g.home_team}|${g.away_team}|${(g.time || '').split('T')[0]}`.toLowerCase();
-                    existingGameIds.add(matchKey);
-                  }
-                }
-              } catch (e) {
-                console.warn('Could not fetch existing games for dedup check:', e);
+              const response = await fetch(buildApiUrl('/api/admin/fetch-api-football/execute'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  phone: loggedInUser.phone,
+                  games,
+                  sport: 'football',
+                }),
+              });
+              const data = await response.json();
+              if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Failed to add fetched games');
               }
 
-              // Add each game using the standard admin API
-              let successCount = 0;
-              let failCount = 0;
-              let skipCount = 0;
-              
-              for (const game of games) {
-                try {
-                  // Check for duplicates by api_fixture_id and team+date
-                  const afGameId = `af-${game.api_fixture_id}`;
-                  const matchKey = `${game.home_team}|${game.away_team}|${(game.time_utc || game.time_eat || '').split('T')[0]}`.toLowerCase();
-                  
-                  if (existingGameIds.has(afGameId) || existingGameIds.has(matchKey)) {
-                    skipCount++;
-                    console.log(`⏭️ Skipping duplicate: ${game.home_team} vs ${game.away_team}`);
-                    continue;
-                  }
-
-                  // Map snake_case API response to camelCase for admin API
-                  const response = await fetch(gamesEndpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      phone: loggedInUser.phone,
-                      gameId: afGameId,
-                      league: game.league,
-                      homeTeam: game.home_team,
-                      awayTeam: game.away_team,
-                      homeOdds: game.home_odds,
-                      drawOdds: game.draw_odds,
-                      awayOdds: game.away_odds,
-                      time: game.time_utc || game.time_eat,
-                      status: 'upcoming',
-                      markets: game.markets
-                    })
-                  });
-
-                  const data = await response.json();
-                  if (data.success) {
-                    successCount++;
-                    // Track so we don't re-add in same batch
-                    existingGameIds.add(afGameId);
-                    existingGameIds.add(matchKey);
-                    // Add to local games context
-                    const gameData: GameOdds = {
-                      id: data.game.game_id || data.game.id,
-                      league: data.game.league || '',
-                      homeTeam: data.game.home_team,
-                      awayTeam: data.game.away_team,
-                      homeOdds: parseFloat(data.game.home_odds),
-                      drawOdds: parseFloat(data.game.draw_odds),
-                      awayOdds: parseFloat(data.game.away_odds),
-                      time: data.game.time || game.time_utc || game.time_eat,
-                      status: data.game.status || 'upcoming',
-                      markets: data.game.markets || game.markets || {},
-                    };
-                    addGame(gameData);
-                  } else {
-                    failCount++;
-                    console.error(`Failed to add ${game.home_team} vs ${game.away_team}:`, data.error);
-                  }
-                } catch (error) {
-                  failCount++;
-                  console.error(`Error adding ${game.home_team} vs ${game.away_team}:`, error);
-                }
-              }
-
-              // Show result and refresh
-              const parts = [`✅ Added ${successCount} games`];
-              if (skipCount > 0) parts.push(`${skipCount} duplicates skipped`);
-              if (failCount > 0) parts.push(`${failCount} failed`);
+              const addedCount = Number(data.games_added) || 0;
+              const failedCount = Number(data.games_failed) || 0;
+              const skippedCount = Array.isArray(data.results?.added)
+                ? data.results.added.filter((result: { status?: string }) => result.status === 'already_exists').length
+                : 0;
+              const parts = [`✅ Added ${addedCount} games`];
+              if (skippedCount > 0) parts.push(`${skippedCount} duplicates skipped`);
+              if (failedCount > 0) parts.push(`${failedCount} failed`);
               alert(parts.join(', ') + '!');
               setShowFetchGamesModal(false);
               
               // Refresh games to sync with all users
-              setTimeout(() => {
-                refreshGames();
-              }, 500);
+              await refreshGames();
             } catch (error) {
               console.error('Error executing games:', error);
               alert('Failed to add games. Check console for details.');
