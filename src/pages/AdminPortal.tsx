@@ -2378,6 +2378,13 @@ const AdminPortal = () => {
   }).length;
   
   const activeBets = bets.filter(b => b.status === "Open").length;
+  const upcomingGames = games.filter((game) =>
+    game.status === 'upcoming' && isFutureKickoff(game.time)
+  );
+  // The default homepage view is football, so this card mirrors its count.
+  const homepageUpcomingGames = upcomingGames.filter((game) =>
+    (game.sport || 'football') === 'football'
+  );
   
   const todayRevenue = allTransactions
     .filter((t: any) => {
@@ -2394,7 +2401,7 @@ const AdminPortal = () => {
     { icon: Users, label: "Total Users", value: totalUsers.toLocaleString(), color: "text-primary" },
     { icon: UserPlus, label: "Signed Up Today", value: todaySignups.toLocaleString(), color: "text-primary" },
     { icon: BarChart3, label: "Active Bets", value: activeBets.toLocaleString(), color: "text-primary" },
-    { icon: Trophy, label: "Games Today", value: games.length.toString(), color: "text-gold" },
+    { icon: Trophy, label: "Upcoming Games", value: homepageUpcomingGames.length.toString(), color: "text-gold" },
   ];
 
   const stopDarajaTestPolling = () => {
@@ -2971,7 +2978,7 @@ const AdminPortal = () => {
             <div className="space-y-3">
               {/* ── Select-all / bulk-delete toolbar (upcoming + live games only) ── */}
               {(() => {
-                const selectableGames = sortGamesByKickoffTime(games).filter(g => g.status === 'upcoming' && isVisibleInAdminPanel(g));
+                const selectableGames = sortGamesByKickoffTime(upcomingGames);
                 const allSelected = selectableGames.length > 0 && selectableGames.every(g => markedGames.has(g.id));
                 const someSelected = markedGames.size > 0;
                 if (selectableGames.length === 0) return null;
@@ -3013,7 +3020,11 @@ const AdminPortal = () => {
 
               {(() => {
                 const visibleGames = sortGamesByKickoffTime(games.filter(isVisibleInAdminPanel));
-                const apiGames = visibleGames.filter((game) => isApiManagedGame(game.id));
+                const apiGames = visibleGames.filter((game) =>
+                  isApiManagedGame(game.id) &&
+                  game.status === 'upcoming' &&
+                  isFutureKickoff(game.time)
+                );
                 const finishedGames = visibleGames.filter((game) => game.status === 'finished' && !isApiManagedGame(game.id));
                 const adminGames = visibleGames.filter((game) => !isApiManagedGame(game.id) && game.status !== 'finished');
 

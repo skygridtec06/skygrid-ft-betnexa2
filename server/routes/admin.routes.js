@@ -1013,10 +1013,11 @@ router.get('/games', async (req, res) => {
     const [gamesResult, marketsResult] = await Promise.all([
       supabase.from('games')
         .select('*')
-        .order('id', { ascending: true }),
+        .order('id', { ascending: true })
+        .range(0, 4999),
       supabase.from('markets')
         .select('game_id, market_key, odds')
-        .limit(2000),
+        .range(0, 9999),
     ]);
 
     if (gamesResult.error) {

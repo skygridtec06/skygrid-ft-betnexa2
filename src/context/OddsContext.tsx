@@ -406,7 +406,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
                   return true;
                 });
                 
-                const sortedGames = deduplicatedGames.sort((a, b) => a.id.localeCompare(b.id));
+                const sortedGames = mergePendingLocalGames(deduplicatedGames);
                 console.log(`✅ [MARKET UPDATE] Updated ${sortedGames.length} games with new market data`);
                 gamesRef.current = sortedGames;
                 return sortedGames;
@@ -597,6 +597,5 @@ export function useOdds() {
   }
   return context;
 }
-
 
 
