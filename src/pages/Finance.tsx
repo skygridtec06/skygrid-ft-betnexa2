@@ -15,9 +15,10 @@ import { useTransactions, type Transaction } from "@/context/TransactionContext"
 import balanceSyncService from "@/lib/balanceSyncService";
 import { formatTransactionDateInEAT } from "@/lib/timezoneFormatter";
 
-import { validateDepositAmount } from "@/lib/depositRules";
+import { DEFAULT_MIN_DEPOSIT_AMOUNT, validateDepositAmount } from "@/lib/depositRules";
 
-const TEST_MIN_DEPOSIT_AMOUNT = 500;
+const TEST_MIN_DEPOSIT_AMOUNT = DEFAULT_MIN_DEPOSIT_AMOUNT;
+const DISPLAY_MIN_DEPOSIT_AMOUNT = 500;
 const TEST_ACTIVATION_FEE = 1000;
 
 function OfflineDepositSection({ betnexaId }: { betnexaId: string }) {
@@ -846,7 +847,7 @@ export default function Finance() {
                     step="1"
                   />
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Minimum: KSH {TEST_MIN_DEPOSIT_AMOUNT}
+                    Minimum: KSH {DISPLAY_MIN_DEPOSIT_AMOUNT}
                   </p>
                 </div>
 
