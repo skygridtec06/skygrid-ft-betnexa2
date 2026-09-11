@@ -4238,6 +4238,27 @@ router.get('/payments', checkAdmin, async (req, res) => {
   }
 });
 
+// GET: Fetch C2B payments that could not be matched to a BETNEXA ID or phone
+router.get('/c2b-mismatches', checkAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .like('transaction_id', 'C2B-UNMATCHED-%')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('❌ Failed to fetch C2B mismatches:', error.message);
+      return res.status(500).json({ success: false, error: 'Failed to fetch C2B mismatches' });
+    }
+
+    return res.json({ success: true, mismatches: data || [] });
+  } catch (error) {
+    console.error('❌ C2B mismatch fetch error:', error.message);
+    return res.status(500).json({ success: false, error: 'Failed to fetch C2B mismatches' });
+  }
+});
+
 
 // POST: Record withdrawal transaction (when user initiates withdrawal)
 // POST: Manually insert a transaction for any user (admin tool)

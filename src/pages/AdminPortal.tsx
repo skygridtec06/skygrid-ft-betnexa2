@@ -3,7 +3,7 @@ import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Trash2, CheckCircle, XCircle, Clock, DollarSign, Users, UserPlus, BarChart3, Trophy, Settings, RefreshCw, Edit2, Save, ArrowDown, ArrowUp, Play, Pause, Square, Lock, Unlock, Shield, Zap, Upload, Image as ImageIcon, Loader2, Megaphone, Calendar, Download, Ban, Flame } from "lucide-react";
+import { Plus, Trash2, CheckCircle, XCircle, Clock, DollarSign, Users, UserPlus, BarChart3, Trophy, Settings, RefreshCw, Edit2, Save, ArrowDown, ArrowUp, Play, Pause, Square, Lock, Unlock, Shield, Zap, Upload, Image as ImageIcon, Loader2, Megaphone, Calendar, Download, Ban, Flame, AlertCircle } from "lucide-react";
 import { type MatchMarkets } from "@/components/MatchCard";
 import { useMatches } from "@/context/MatchContext";
 import { useBets, type PlacedBet } from "@/context/BetContext";
@@ -112,7 +112,7 @@ const AdminPortal = () => {
   const [pendingTab, setPendingTab] = useState("");
   const [unlockedTabs, setUnlockedTabs] = useState<Set<string>>(new Set());
 
-  const PIN_PROTECTED_TABS = ["earnings", "transactions"];
+  const PIN_PROTECTED_TABS = ["earnings", "transactions", "c2b"];
   const ADMIN_PIN_HASH = "140702";
 
   const handleTabChange = (tab: string) => {
@@ -383,6 +383,7 @@ const AdminPortal = () => {
   const [resolutionData, setResolutionData] = useState<Record<string, { mpesaReceipt?: string; resultDesc?: string }>>({});
   const [allTransactions, setAllTransactions] = useState<any[]>([]);
   const [allPayments, setAllPayments] = useState<any[]>([]);
+  const [c2bMismatches, setC2bMismatches] = useState<any[]>([]);
   const [activationFees, setActivationFees] = useState<any[]>([]);
   
   // User balance editing state
@@ -479,6 +480,7 @@ const AdminPortal = () => {
     console.log('📦 Fetching transactions and payments...');
     fetchAllTransactions();
     fetchAllPayments();
+    fetchC2bMismatches();
     
     console.log('📦 Fetching all bets...');
     fetchAllBets();
@@ -2329,6 +2331,20 @@ const AdminPortal = () => {
     }
   };
 
+  const fetchC2bMismatches = async () => {
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'https://www.betnexabackend.co.ke';
+      const phone = loggedInUser?.phone || '';
+      const response = await fetch(`${apiUrl}/api/admin/c2b-mismatches?phone=${encodeURIComponent(phone)}`);
+      const data = await response.json();
+      if (data.success) {
+        setC2bMismatches(data.mismatches || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch C2B mismatches:", error);
+    }
+  };
+
   // Resolve a failed payment
   const resolveFailedPayment = async (externalReference: string) => {
     try {
@@ -2402,6 +2418,7 @@ const AdminPortal = () => {
     { icon: UserPlus, label: "Signed Up Today", value: todaySignups.toLocaleString(), color: "text-primary" },
     { icon: BarChart3, label: "Active Bets", value: activeBets.toLocaleString(), color: "text-primary" },
     { icon: Trophy, label: "Upcoming Games", value: homepageUpcomingGames.length.toString(), color: "text-gold" },
+    { icon: AlertCircle, label: "C2B", value: c2bMismatches.length.toString(), color: "text-yellow-500", note: "Unmatched payments" },
   ];
 
   const stopDarajaTestPolling = () => {
@@ -2648,7 +2665,7 @@ const AdminPortal = () => {
         </div>
 
         <Tabs value={adminTab} onValueChange={handleTabChange}>
-          <TabsList className="mb-6 bg-secondary grid w-full grid-cols-7">
+          <TabsList className="mb-6 bg-secondary grid w-full grid-cols-8">
             <TabsTrigger value="games" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Trophy className="mr-1 h-4 w-4" /> Games
             </TabsTrigger>
@@ -2666,6 +2683,9 @@ const AdminPortal = () => {
             </TabsTrigger>
             <TabsTrigger value="transactions" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <DollarSign className="mr-1 h-4 w-4" /> Transactions
+            </TabsTrigger>
+            <TabsTrigger value="c2b" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <AlertCircle className="mr-1 h-4 w-4" /> C2B
             </TabsTrigger>
             <TabsTrigger value="bets" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Trophy className="mr-1 h-4 w-4" /> Bets
@@ -4778,6 +4798,66 @@ const AdminPortal = () => {
                 <div className="text-6xl text-gold/30">💰</div>
               </div>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="c2b" className="space-y-6">
+            <Card className="border-border bg-card p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="font-display text-sm font-bold uppercase tracking-wider text-foreground">
+                    C2B Mismatches
+                  </h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Offline Paybill payments that were received but could not be matched to a BETNEXA ID or phone number.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={fetchC2bMismatches}
+                  disabled={loadingPayments}
+                >
+                  <RefreshCw className="mr-1 h-4 w-4" /> Refresh
+                </Button>
+              </div>
+            </Card>
+
+            {c2bMismatches.length === 0 ? (
+              <Card className="border-border bg-card p-6 text-center text-sm text-muted-foreground">
+                No C2B mismatches have been recorded.
+              </Card>
+            ) : (
+              <div className="space-y-3">
+                {c2bMismatches.map((mismatch: any) => (
+                  <Card key={mismatch.id || mismatch.transaction_id} className="border-yellow-500/30 bg-card p-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div className="flex items-start gap-3">
+                        <div className="rounded-full bg-yellow-500/20 p-2">
+                          <AlertCircle className="h-4 w-4 text-yellow-500" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-foreground">
+                            {mismatch.description || 'Unmatched C2B payment'}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatTransactionDateInEAT(mismatch.created_at)} via {mismatch.method || 'M-Pesa C2B Paybill'}
+                          </p>
+                          <p className="mt-1 break-all text-xs text-muted-foreground">
+                            Receipt: {mismatch.mpesa_receipt || 'Not provided'} · Phone field: {mismatch.phone_number || 'Not provided'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-left md:text-right">
+                        <p className="font-bold text-yellow-500">
+                          KSH {Number(mismatch.amount || 0).toLocaleString()}
+                        </p>
+                        <p className="mt-1 text-xs text-red-400">Pending manual resolution</p>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="bets" className="space-y-6">
