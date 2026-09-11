@@ -259,7 +259,7 @@ export default function Signup() {
                   <Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     type="tel"
-                    placeholder="e.g., 254712345678"
+                    placeholder="e.g., 0712345678"
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     className="pl-10"
