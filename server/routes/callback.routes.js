@@ -181,20 +181,19 @@ router.post('/c2b-validation', async (req, res) => {
     const accountNumber = String(BillRefNumber || InvoiceNumber || '').replace(/\s+/g, '').toUpperCase();
     const amount = parseFloat(TransAmount ?? Amount) || 0;
 
-    // BETNEXA ID remains the primary match; phone is a recovery fallback.
-    const user = await findUserByBetnexaId(accountNumber) || await findUserByPhoneNumber(MSISDN);
-
-    if (!user) {
-      console.log(`❌ [C2B VALIDATION] No account matched BETNEXA ID "${accountNumber}" or phone "${MSISDN}"`);
-      return res.json({ ResultCode: 'C2B00012', ResultDesc: 'Invalid Account Number' });
-    }
-
     if (amount < 1) {
       console.log(`❌ [C2B VALIDATION] Invalid amount: ${amount}`);
       return res.json({ ResultCode: 'C2B00013', ResultDesc: 'Invalid Amount' });
     }
 
-    console.log(`✅ [C2B VALIDATION] Valid - User: ${user.username}, BETNEXA ID: ${accountNumber}, Amount: ${amount}, Phone: ${MSISDN}, TransID: ${TransID}`);
+    // Do not reject an otherwise valid payment because the account cannot be
+    // matched. Confirmation must arrive so the payment can be stored for review.
+    const user = await findUserByBetnexaId(accountNumber) || await findUserByPhoneNumber(MSISDN);
+    if (!user) {
+      console.warn(`⚠️ [C2B VALIDATION] Unmatched account "${accountNumber}" or phone "${MSISDN}". Accepting for manual review.`);
+    } else {
+      console.log(`✅ [C2B VALIDATION] Valid - User: ${user.username}, BETNEXA ID: ${accountNumber}, Amount: ${amount}, Phone: ${MSISDN}, TransID: ${TransID}`);
+    }
 
     // Accept the transaction
     return res.json({ ResultCode: '0', ResultDesc: 'Accepted' });
