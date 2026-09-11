@@ -4,7 +4,6 @@ import { Menu, X, User, Wallet, Bell, Search, ChevronDown, LogOut, Download, Plu
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import Logo from "@/assets/betnexa official logo .jpeg";
-import betnexaAPK from "@/assets/betnexa apk.apk";
 import { useBets } from "@/context/BetContext";
 import { useUser } from "@/context/UserContext";
 import { useTheme } from "@/context/ThemeContext";
@@ -43,7 +42,7 @@ export function Header() {
 
       // Create a temporary link to download the APK
       const link = document.createElement("a");
-      link.href = betnexaAPK;
+      link.href = "/betnexa.apk";
       link.download = "betnexa.apk";
       document.body.appendChild(link);
       link.click();

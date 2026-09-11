@@ -25,7 +25,6 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useUser } from "@/context/UserContext";
 import { useBets } from "@/context/BetContext";
-import betnexaAPK from "@/assets/betnexa apk.apk";
 
 export default function Profile() {
   const navigate = useNavigate();
@@ -48,7 +47,7 @@ export default function Profile() {
 
       // Create a temporary link to download the APK
       const link = document.createElement("a");
-      link.href = betnexaAPK;
+      link.href = "/betnexa.apk";
       link.download = "betnexa.apk";
       document.body.appendChild(link);
       link.click();
