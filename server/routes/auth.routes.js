@@ -8,6 +8,7 @@ const router = express.Router();
 const supabase = require('../services/database.js');
 const { sendWelcomeSms } = require('../services/smsService.js');
 const { generateUniqueBetnexaId } = require('../services/betnexaIdService.js');
+const { normalizeKenyanPhone } = require('../utils/phoneUtils.js');
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -28,44 +29,9 @@ const withRetry = async (operation, attempts = 2, delayMs = 250) => {
   throw lastError;
 };
 
-const getPhoneCandidates = (inputPhone) => {
-  const raw = String(inputPhone || '').trim();
-  if (!raw) return [];
-
-  const digits = raw.replace(/\D/g, '');
-  const candidates = new Set([raw]);
-
-  if (digits) {
-    candidates.add(digits);
-  }
-
-  // Kenya number normalization helpers (07..., 2547..., +2547...)
-  if (digits.startsWith('0') && digits.length === 10) {
-    const tail = digits.slice(1);
-    candidates.add(`+254${tail}`);
-    candidates.add(`254${tail}`);
-  }
-
-  if (digits.startsWith('254') && digits.length === 12) {
-    const tail = digits.slice(3);
-    candidates.add(`0${tail}`);
-    candidates.add(`+254${tail}`);
-  }
-
-  if (raw.startsWith('+254')) {
-    const tail = raw.slice(4).replace(/\D/g, '');
-    if (tail) {
-      candidates.add(`0${tail}`);
-      candidates.add(`254${tail}`);
-    }
-  }
-
-  return [...candidates].filter(Boolean);
-};
-
 const findUserByPhone = async (phone) => {
-  const candidates = getPhoneCandidates(phone);
-  if (candidates.length === 0) {
+  const normalizedPhone = normalizeKenyanPhone(phone);
+  if (!normalizedPhone) {
     return { user: null, error: null };
   }
 
@@ -73,7 +39,7 @@ const findUserByPhone = async (phone) => {
     supabase
       .from('users')
       .select('*')
-      .in('phone_number', candidates)
+      .eq('phone_number', normalizedPhone)
       .limit(1)
   ));
 
@@ -225,9 +191,16 @@ router.post('/signup', async (req, res) => {
         message: 'Username, phone, and password are required'
       });
     }
+    const normalizedPhone = normalizeKenyanPhone(phone);
+    if (!normalizedPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number must start with 07 or 01 and contain 10 digits'
+      });
+    }
 
     // Check if user already exists (across common phone formats)
-    const { user: existingUser, error: existingUserError } = await findUserByPhone(phone);
+    const { user: existingUser, error: existingUserError } = await findUserByPhone(normalizedPhone);
 
     if (existingUserError) {
       return res.status(500).json({
@@ -261,7 +234,7 @@ router.post('/signup', async (req, res) => {
         {
           username,
           email: email || null,
-          phone_number: phone,
+          phone_number: normalizedPhone,
           password,
           account_balance: 0,
           total_bets: 0,

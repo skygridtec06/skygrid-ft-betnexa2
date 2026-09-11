@@ -8,6 +8,7 @@ import Logo from "@/assets/betnexa official logo .jpeg";
 import { useUserManagement } from "@/context/UserManagementContext";
 import { useUser } from "@/context/UserContext";
 import { useBets } from "@/context/BetContext";
+import { normalizeKenyanPhone } from "@/lib/phone";
 
 export default function Signup() {
   const navigate = useNavigate();
@@ -42,11 +43,12 @@ export default function Signup() {
       newErrors.email = "Email already registered";
     }
 
+    const normalizedPhone = normalizeKenyanPhone(formData.phone);
     if (!formData.phone.trim()) {
       newErrors.phone = "Phone number is required";
-    } else if (!/^\d{10,13}$/.test(formData.phone.replace(/\D/g, ""))) {
-      newErrors.phone = "Phone must be 10-13 digits";
-    } else if (users.some((u) => u.phone === formData.phone)) {
+    } else if (!normalizedPhone) {
+      newErrors.phone = "Use a Kenyan number starting with 07 or 01";
+    } else if (users.some((u) => u.phone === normalizedPhone)) {
       newErrors.phone = "Phone number already registered";
     }
 
@@ -80,7 +82,7 @@ export default function Signup() {
       const newUser = await signupWithSupabase({
         name: formData.name,
         email: formData.email,
-        phone: formData.phone,
+        phone: normalizedPhone!,
         password: formData.password,
       });
 
@@ -130,7 +132,7 @@ export default function Signup() {
           id: `user${users.length + 1}`,
           name: formData.name,
           email: formData.email,
-          phone: formData.phone,
+          phone: normalizedPhone!,
           password: formData.password,
           username: formData.name
             .toLowerCase()

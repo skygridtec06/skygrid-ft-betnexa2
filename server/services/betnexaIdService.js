@@ -6,6 +6,7 @@
  */
 
 const supabase = require('./database.js');
+const { normalizeKenyanPhone } = require('../utils/phoneUtils.js');
 
 // Consonants only (no vowels A, E, I, O, U)
 const CONSONANTS = 'BCDFGHJKLMNPQRSTVWXYZ';
@@ -85,27 +86,13 @@ async function findUserByBetnexaId(betnexaId) {
  * Returns null when there is no match or when the phone is shared by multiple accounts.
  */
 async function findUserByPhoneNumber(phoneNumber) {
-  const digits = String(phoneNumber || '').replace(/\D/g, '');
-  if (!digits) return null;
-
-  const normalized = digits.startsWith('254')
-    ? digits
-    : (digits.startsWith('0') && digits.length === 10
-      ? `254${digits.slice(1)}`
-      : (digits.length === 9 && /^[17]/.test(digits) ? `254${digits}` : null));
-
+  const normalized = normalizeKenyanPhone(phoneNumber);
   if (!normalized) return null;
-
-  const phoneVariants = Array.from(new Set([
-    normalized,
-    `0${normalized.slice(3)}`,
-    `+${normalized}`,
-  ]));
 
   const { data, error } = await supabase
     .from('users')
     .select('*')
-    .in('phone_number', phoneVariants)
+    .eq('phone_number', normalized)
     .limit(2);
 
   if (error) {
