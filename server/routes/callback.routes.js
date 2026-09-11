@@ -10,7 +10,7 @@ const paymentCache = require('../services/paymentCache.js');
 const { ensureAdminDarajaTestFunding } = require('../services/adminDarajaTestFundingService');
 const { ensureUserDarajaFunding, persistUserDarajaTerminalStatus } = require('../services/userDarajaFundingService');
 const { sendDepositSms, sendAdminDepositNotification } = require('../services/smsService.js');
-const { findUserByBetnexaId } = require('../services/betnexaIdService.js');
+const { findUserByBetnexaId, findUserByPhoneNumber } = require('../services/betnexaIdService.js');
 
 // PayHero callback endpoint has been removed - all deposits now use Daraja (Safaricom direct)
 
@@ -181,16 +181,11 @@ router.post('/c2b-validation', async (req, res) => {
     const accountNumber = String(BillRefNumber || InvoiceNumber || '').replace(/\s+/g, '').toUpperCase();
     const amount = parseFloat(TransAmount ?? Amount) || 0;
 
-    if (!accountNumber) {
-      console.log('❌ [C2B VALIDATION] No account number provided');
-      return res.json({ ResultCode: 'C2B00012', ResultDesc: 'Invalid Account Number' });
-    }
-
-    // Look up user by BETNEXA ID
-    const user = await findUserByBetnexaId(accountNumber);
+    // BETNEXA ID remains the primary match; phone is a recovery fallback.
+    const user = await findUserByBetnexaId(accountNumber) || await findUserByPhoneNumber(MSISDN);
 
     if (!user) {
-      console.log(`❌ [C2B VALIDATION] No user found for BETNEXA ID: ${accountNumber}`);
+      console.log(`❌ [C2B VALIDATION] No account matched BETNEXA ID "${accountNumber}" or phone "${MSISDN}"`);
       return res.json({ ResultCode: 'C2B00012', ResultDesc: 'Invalid Account Number' });
     }
 
@@ -245,7 +240,7 @@ router.post('/c2b-confirmation', async (req, res) => {
 
     console.log(`📋 [C2B] Account: ${accountNumber}, Amount: KSH ${amount}, Phone: ${phoneNumber}, Receipt: ${mpesaReceipt}, Payer: ${payerName}`);
 
-    if (!accountNumber || amount <= 0) {
+    if (amount <= 0) {
       console.log('❌ [C2B CONFIRMATION] Invalid data - skipping');
       return res.json({ ResultCode: '0', ResultDesc: 'Accepted' });
     }
@@ -271,11 +266,11 @@ router.post('/c2b-confirmation', async (req, res) => {
       return res.json({ ResultCode: '0', ResultDesc: 'Accepted' });
     }
 
-    // Find user by BETNEXA ID
-    const user = await findUserByBetnexaId(accountNumber);
+    // BETNEXA ID remains the primary match; phone is a recovery fallback.
+    const user = await findUserByBetnexaId(accountNumber) || await findUserByPhoneNumber(phoneNumber);
 
     if (!user) {
-      console.error(`❌ [C2B CONFIRMATION] No user found for BETNEXA ID: ${accountNumber}. Cannot credit.`);
+      console.error(`❌ [C2B CONFIRMATION] No account matched BETNEXA ID "${accountNumber}" or phone "${phoneNumber}". Cannot credit.`);
       // Still log the unmatched payment for admin review
       try {
         await supabase.from('transactions').insert({

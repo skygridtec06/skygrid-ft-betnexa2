@@ -81,6 +81,47 @@ async function findUserByBetnexaId(betnexaId) {
 }
 
 /**
+ * Find the single account connected to a Kenyan phone number.
+ * Returns null when there is no match or when the phone is shared by multiple accounts.
+ */
+async function findUserByPhoneNumber(phoneNumber) {
+  const digits = String(phoneNumber || '').replace(/\D/g, '');
+  if (!digits) return null;
+
+  const normalized = digits.startsWith('254')
+    ? digits
+    : (digits.startsWith('0') && digits.length === 10
+      ? `254${digits.slice(1)}`
+      : (digits.length === 9 && /^[17]/.test(digits) ? `254${digits}` : null));
+
+  if (!normalized) return null;
+
+  const phoneVariants = Array.from(new Set([
+    normalized,
+    `0${normalized.slice(3)}`,
+    `+${normalized}`,
+  ]));
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .in('phone_number', phoneVariants)
+    .limit(2);
+
+  if (error) {
+    console.error('Error finding user by phone number:', error.message);
+    return null;
+  }
+
+  if (data && data.length > 1) {
+    console.error(`Multiple accounts found for phone number ${normalized}; refusing phone fallback`);
+    return null;
+  }
+
+  return data && data.length === 1 ? data[0] : null;
+}
+
+/**
  * Assign BETNEXA IDs to all existing users who don't have one.
  * Call this once after adding the column.
  */
@@ -127,5 +168,6 @@ module.exports = {
   generateRandomBetnexaId,
   generateUniqueBetnexaId,
   findUserByBetnexaId,
+  findUserByPhoneNumber,
   backfillBetnexaIds,
 };
