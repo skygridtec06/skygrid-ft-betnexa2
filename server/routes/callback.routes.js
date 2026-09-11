@@ -273,7 +273,7 @@ router.post('/c2b-confirmation', async (req, res) => {
       console.error(`❌ [C2B CONFIRMATION] No account matched BETNEXA ID "${accountNumber}" or phone "${phoneNumber}". Cannot credit.`);
       // Still log the unmatched payment for admin review
       try {
-        await supabase.from('transactions').insert({
+        const { error: mismatchInsertError } = await supabase.from('transactions').insert({
           transaction_id: `C2B-UNMATCHED-${mpesaReceipt}`,
           user_id: null,
           type: 'deposit',
@@ -286,6 +286,11 @@ router.post('/c2b-confirmation', async (req, res) => {
           admin_notes: `No user found for BETNEXA ID "${accountNumber}". Manual resolution needed.`,
           created_at: new Date().toISOString(),
         });
+        if (mismatchInsertError) {
+          console.error('❌ Failed to persist unmatched C2B payment:', mismatchInsertError.message);
+        } else {
+          console.log(`✅ [C2B] Unmatched payment stored for admin review: ${mpesaReceipt}`);
+        }
       } catch (logErr) {
         console.error('❌ Failed to log unmatched C2B transaction:', logErr.message);
       }

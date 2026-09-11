@@ -4244,7 +4244,11 @@ router.get('/c2b-mismatches', checkAdmin, async (req, res) => {
     const { data, error } = await supabase
       .from('transactions')
       .select('*')
-      .like('transaction_id', 'C2B-UNMATCHED-%')
+      .eq('type', 'deposit')
+      .eq('status', 'failed')
+      .is('user_id', null)
+      .eq('method', 'M-Pesa C2B Paybill')
+      .ilike('description', 'UNMATCHED C2B%')
       .order('created_at', { ascending: false });
 
     if (error) {
