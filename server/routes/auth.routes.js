@@ -9,6 +9,7 @@ const supabase = require('../services/database.js');
 const { sendWelcomeSms } = require('../services/smsService.js');
 const { generateUniqueBetnexaId } = require('../services/betnexaIdService.js');
 const { normalizeKenyanPhone } = require('../utils/phoneUtils.js');
+const { isCanonicalKenyanPhone } = require('../utils/authPhoneUtils.js');
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -81,6 +82,13 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Phone and password are required'
+      });
+    }
+
+    if (!isCanonicalKenyanPhone(phone)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number must be exactly 10 digits and start with 07 or 01'
       });
     }
 
@@ -196,6 +204,12 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Phone number must start with 07 or 01 and contain 10 digits'
+      });
+    }
+    if (!isCanonicalKenyanPhone(phone)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number must be exactly 10 digits and start with 07 or 01'
       });
     }
 

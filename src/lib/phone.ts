@@ -11,3 +11,7 @@ export function normalizeKenyanPhone(phone: string): string | null {
 
   return null;
 }
+
+export function isCanonicalKenyanPhone(phone: string): boolean {
+  return /^(07|01)\d{8}$/.test(phone);
+}

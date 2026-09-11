@@ -8,7 +8,7 @@ import Logo from "@/assets/betnexa official logo .jpeg";
 import { useUserManagement } from "@/context/UserManagementContext";
 import { useUser } from "@/context/UserContext";
 import { useBets } from "@/context/BetContext";
-import { normalizeKenyanPhone } from "@/lib/phone";
+import { isCanonicalKenyanPhone } from "@/lib/phone";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -40,11 +40,10 @@ export default function Login() {
     e.preventDefault();
     const newErrors: Record<string, string> = {};
 
-    const normalizedPhone = normalizeKenyanPhone(formData.phone);
     if (!formData.phone.trim()) {
       newErrors.phone = "Phone number is required";
-    } else if (!normalizedPhone) {
-      newErrors.phone = "Use a Kenyan number starting with 07 or 01";
+    } else if (!isCanonicalKenyanPhone(formData.phone)) {
+      newErrors.phone = "Use exactly 10 digits starting with 07 or 01";
     }
 
     if (!formData.password) {
@@ -64,7 +63,7 @@ export default function Login() {
     try {
       // Try Supabase login first (for all users including admins registered in database)
       // This supports both regular users and admin users from Supabase
-      const dbUser = await loginWithSupabase(normalizedPhone!, formData.password);
+      const dbUser = await loginWithSupabase(formData.phone, formData.password);
       
       if (dbUser) {
         // Check if user is admin in database
