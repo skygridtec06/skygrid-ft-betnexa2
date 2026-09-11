@@ -1,11 +1,11 @@
 /**
  * Safaricom C2B (Customer-to-Business) Service
- * Handles offline M-Pesa payments where users pay to Paybill 4046271
+ * Handles offline M-Pesa payments where users pay to Paybill 4320291
  * using their BETNEXA ID as the account number.
  *
  * Flow:
  * 1. User goes to M-Pesa → Lipa na M-Pesa → Pay Bill
- * 2. Enters Business Number: 4046271
+ * 2. Enters Business Number: 4320291
  * 3. Enters Account Number: their BETNEXA ID (e.g. K234)
  * 4. Enters amount and confirms
  * 5. Safaricom sends Validation request → we accept/reject

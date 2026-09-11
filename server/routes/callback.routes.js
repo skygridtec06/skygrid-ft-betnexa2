@@ -176,9 +176,10 @@ router.post('/c2b-validation', async (req, res) => {
   try {
     console.log('\n🔔 [C2B VALIDATION] Request received:', JSON.stringify(req.body, null, 2));
 
-    const { BillRefNumber, TransAmount, MSISDN, TransID } = req.body;
-    const accountNumber = (BillRefNumber || '').trim().toUpperCase();
-    const amount = parseFloat(TransAmount) || 0;
+    const payload = req.body?.Body || req.body || {};
+    const { BillRefNumber, InvoiceNumber, TransAmount, Amount, MSISDN, TransID } = payload;
+    const accountNumber = String(BillRefNumber || InvoiceNumber || '').replace(/\s+/g, '').toUpperCase();
+    const amount = parseFloat(TransAmount ?? Amount) || 0;
 
     if (!accountNumber) {
       console.log('❌ [C2B VALIDATION] No account number provided');
@@ -218,6 +219,7 @@ router.post('/c2b-confirmation', async (req, res) => {
   try {
     console.log('\n🔔 [C2B CONFIRMATION] Payment received:', JSON.stringify(req.body, null, 2));
 
+    const payload = req.body?.Body || req.body || {};
     const {
       TransactionType,
       TransID,
@@ -232,10 +234,11 @@ router.post('/c2b-confirmation', async (req, res) => {
       FirstName,
       MiddleName,
       LastName,
-    } = req.body;
+      Amount,
+    } = payload;
 
-    const accountNumber = (BillRefNumber || '').trim().toUpperCase();
-    const amount = parseFloat(TransAmount) || 0;
+    const accountNumber = String(BillRefNumber || InvoiceNumber || '').replace(/\s+/g, '').toUpperCase();
+    const amount = parseFloat(TransAmount ?? Amount) || 0;
     const phoneNumber = MSISDN || '';
     const mpesaReceipt = TransID || '';
     const payerName = [FirstName, MiddleName, LastName].filter(Boolean).join(' ');
@@ -350,7 +353,7 @@ router.post('/c2b-confirmation', async (req, res) => {
           }
         }
       } else {
-        await supabase.from('transactions').insert({
+        const { error: insertError } = await supabase.from('transactions').insert({
           transaction_id: externalRef,
           user_id: user.id,
           type: 'deposit',
@@ -366,7 +369,11 @@ router.post('/c2b-confirmation', async (req, res) => {
           created_at: new Date().toISOString(),
           completed_at: new Date().toISOString(),
         });
-        console.log(`✅ [C2B] Transaction record created: ${externalRef}`);
+        if (insertError) {
+          console.error(`❌ [C2B] Failed to create transaction record ${externalRef}:`, insertError.message);
+        } else {
+          console.log(`✅ [C2B] Transaction record created: ${externalRef}`);
+        }
       }
     } catch (txErr) {
       console.error('⚠️ [C2B] Failed to create/update transaction record:', txErr.message);
@@ -402,7 +409,7 @@ router.post('/c2b-confirmation', async (req, res) => {
           }
         }
       } else {
-        await supabase.from('deposits').insert({
+        const { error: insertDepositError } = await supabase.from('deposits').insert({
           user_id: user.id,
           amount,
           phone_number: phoneNumber,
@@ -414,7 +421,11 @@ router.post('/c2b-confirmation', async (req, res) => {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         });
-        console.log(`✅ [C2B] Deposit record created`);
+        if (insertDepositError) {
+          console.error(`❌ [C2B] Failed to create deposit record ${externalRef}:`, insertDepositError.message);
+        } else {
+          console.log(`✅ [C2B] Deposit record created`);
+        }
       }
     } catch (depErr) {
       console.warn('⚠️ [C2B] Failed to create/update deposit record:', depErr.message);
