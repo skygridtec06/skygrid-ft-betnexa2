@@ -1014,14 +1014,18 @@ router.get('/games', async (req, res) => {
       const pageSize = Math.min(Math.max(Number.parseInt(req.query.page_size, 10) || 250, 50), 500);
       const from = requestedPage * pageSize;
       const to = from + pageSize - 1;
-      const { data: games, error: gamesError, count } = await supabase
+      // Fetch one extra row so we can determine whether another page exists
+      // without running an expensive exact-count query on every request.
+      const { data: pageRows, error: gamesError } = await supabase
         .from('games')
-        .select('*', { count: 'exact' })
+        .select('*')
         .order('id', { ascending: true })
-        .range(from, to);
+        .range(from, to + 1);
 
       if (gamesError) throw gamesError;
 
+      const hasMore = (pageRows || []).length > pageSize;
+      const games = (pageRows || []).slice(0, pageSize);
       const gameIds = (games || []).map((game) => game.id).filter(Boolean);
       const { data: markets, error: marketsError } = gameIds.length > 0
         ? await supabase
@@ -1057,17 +1061,14 @@ router.get('/games', async (req, res) => {
         is_hot: hotGameIds.has(game.id),
         sport: getSportFromGameId(game.game_id),
       }));
-      const totalGames = count || 0;
-
       res.set('Cache-Control', 'no-store');
       return res.json({
         success: true,
         games: result,
-        total_games: totalGames,
         page: requestedPage,
         page_size: pageSize,
-        has_more: from + result.length < totalGames,
-        pagination: { complete: from + result.length >= totalGames }
+        has_more: hasMore,
+        pagination: { complete: !hasMore }
       });
     }
 

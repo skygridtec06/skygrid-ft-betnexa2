@@ -102,7 +102,6 @@ export function OddsProvider({ children }: { children: ReactNode }) {
     const allGames: any[] = [];
     let page = 0;
     let hasMore = true;
-    let totalGames = 0;
 
     while (hasMore) {
       const response = await fetch(
@@ -119,11 +118,10 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       }
 
       allGames.push(...data.games);
-      totalGames = Number(data.total_games) || allGames.length;
       hasMore = data.has_more === true;
       page += 1;
 
-      if (page > Math.ceil(Math.max(totalGames, allGames.length) / pageSize) + 1) {
+      if (page > 10000) {
         throw new Error('Games pagination exceeded the expected page count');
       }
     }
@@ -131,7 +129,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
     return {
       success: true,
       games: allGames,
-      total_games: totalGames,
+      total_games: allGames.length,
       pagination: { complete: true }
     };
   }, []);
