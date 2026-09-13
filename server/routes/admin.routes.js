@@ -1009,26 +1009,32 @@ router.get('/games', async (req, res) => {
       return res.status(503).json({ error: 'Service unavailable', details: 'Database not initialized', success: false });
     }
 
-    // Games and markets fetched in parallel — saves one full round-trip
-    const [gamesResult, marketsResult] = await Promise.all([
-      supabase.from('games')
-        .select('*')
-        .order('id', { ascending: true })
-        .range(0, 4999),
-      supabase.from('markets')
-        .select('game_id, market_key, odds')
-        .range(0, 9999),
+    // Supabase applies a server-side maximum of 1,000 rows to each request.
+    // Fetching a large range does not bypass that limit, so page until all rows
+    // have been loaded for the public upcoming-games list.
+    const fetchAllRows = async (table, columns, orderColumn) => {
+      const pageSize = 1000;
+      const rows = [];
+      for (let from = 0; ; from += pageSize) {
+        const { data, error } = await supabase
+          .from(table)
+          .select(columns)
+          .order(orderColumn, { ascending: true })
+          .range(from, from + pageSize - 1);
+        if (error) throw error;
+        const page = data || [];
+        rows.push(...page);
+        if (page.length < pageSize) break;
+      }
+      return rows;
+    };
+
+    const [games, allMarkets] = await Promise.all([
+      fetchAllRows('games', '*', 'id'),
+      fetchAllRows('markets', 'game_id, market_key, odds', 'game_id'),
     ]);
 
-    if (gamesResult.error) {
-      console.error('❌ Games query error:', gamesResult.error.message);
-      return res.json({ success: true, games: [] });
-    }
-
-    const games = gamesResult.data || [];
-
     // Group markets by game_id
-    const allMarkets = marketsResult.data || [];
     const marketsByGame = {};
     const hotGameIds = new Set();
     for (const market of allMarkets) {
@@ -1061,7 +1067,11 @@ router.get('/games', async (req, res) => {
     res.json({ success: true, games: result });
   } catch (error) {
     console.error('❌ Get games error:', error.message || error);
-    res.json({ success: true, games: [] });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch games',
+      details: error.message || String(error)
+    });
   }
 });
 

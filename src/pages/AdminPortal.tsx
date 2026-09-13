@@ -1140,7 +1140,8 @@ const AdminPortal = () => {
       }
     } catch (error) {
       console.error('Error adding game:', error);
-      alert('Failed to add game. Check console for details.');
+      const message = error instanceof Error ? error.message : String(error);
+      alert(`Failed to add game: ${message}`);
     }
   };
 
@@ -5454,9 +5455,17 @@ const AdminPortal = () => {
                   sport: 'football',
                 }),
               });
-              const data = await response.json();
+              const data = await response.json().catch(() => ({}));
               if (!response.ok || !data.success) {
-                throw new Error(data.error || 'Failed to add fetched games');
+                const failedDetails = Array.isArray(data.failed_games)
+                  ? data.failed_games.map((result: { game_id?: string; error?: string }) =>
+                    `${result.game_id || 'unknown'}: ${result.error || 'unknown error'}`
+                  ).join('; ')
+                  : '';
+                throw new Error(
+                  [data.error, data.details, failedDetails].filter(Boolean).join(' — ')
+                  || `Request failed with HTTP ${response.status}`
+                );
               }
 
               const addedCount = Number(data.games_added) || 0;
@@ -5474,7 +5483,8 @@ const AdminPortal = () => {
               await refreshGames();
             } catch (error) {
               console.error('Error executing games:', error);
-              alert('Failed to add games. Check console for details.');
+              const message = error instanceof Error ? error.message : String(error);
+              alert(`Failed to add games: ${message}`);
             }
           }}
         />

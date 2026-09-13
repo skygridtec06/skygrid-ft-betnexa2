@@ -76,6 +76,14 @@ export function OddsProvider({ children }: { children: ReactNode }) {
     return Array.from(merged.values()).sort((a, b) => a.id.localeCompare(b.id));
   }, []);
 
+  const preserveCurrentGames = useCallback(() => {
+    const currentGames = [...gamesRef.current];
+    if (currentGames.length > 0) {
+      setGames(currentGames);
+      gamesRef.current = currentGames;
+    }
+  }, []);
+
   const hasApiGamesNeedingSync = () => {
     const now = Date.now();
     return gamesRef.current.some((game) => {
@@ -156,32 +164,25 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           setLoadError(null);
         } else {
           console.warn('⚠️ Invalid response format:', data);
-          const mergedPendingGames = mergePendingLocalGames(gamesRef.current);
-          if (mergedPendingGames.length > 0) {
-            setGames(mergedPendingGames);
-            gamesRef.current = mergedPendingGames;
-          }
+          preserveCurrentGames();
           setLoadError(null); // Don't show error, just start with empty games
         }
       } else {
         console.warn('⚠️ API returned non-OK status:', response.status);
-        const mergedPendingGames = mergePendingLocalGames(gamesRef.current);
-        if (mergedPendingGames.length > 0) {
-          setGames(mergedPendingGames);
-          gamesRef.current = mergedPendingGames;
-        }
+        preserveCurrentGames();
         setLoadError(null); // Don't block app from loading
       }
     } catch (error: any) {
       if (error?.name !== 'AbortError') {
         console.error('❌ Error fetching games:', error);
       }
+      preserveCurrentGames();
       setLoadError(null); // Don't block app from loading
     } finally {
       setIsLoading(false);
       fetchInProgressRef.current = false;
     }
-  }, []);
+  }, [mergePendingLocalGames, preserveCurrentGames]);
 
   useEffect(() => {
     try {
@@ -449,7 +450,9 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       const apiUrl = import.meta.env.VITE_API_URL || 'https://www.betnexabackend.co.ke';
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 second timeout
+      // Pagination can require several round trips once the database has more
+      // than Supabase's 1,000-row response limit.
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
 
       const response = await fetch(`${apiUrl}/api/admin/games`, {
         signal: controller.signal,
@@ -500,23 +503,16 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           setGames(sortedGames);
           gamesRef.current = sortedGames;
         } else {
-          const mergedPendingGames = mergePendingLocalGames(gamesRef.current);
-          if (mergedPendingGames.length > 0) {
-            setGames(mergedPendingGames);
-            gamesRef.current = mergedPendingGames;
-          }
+          preserveCurrentGames();
         }
       } else {
-        const mergedPendingGames = mergePendingLocalGames(gamesRef.current);
-        if (mergedPendingGames.length > 0) {
-          setGames(mergedPendingGames);
-          gamesRef.current = mergedPendingGames;
-        }
+        preserveCurrentGames();
       }
     } catch (error: any) {
       if (error?.name !== 'AbortError') {
         console.error('❌ Error refreshing games:', error);
       }
+      preserveCurrentGames();
     }
   };
 
@@ -597,5 +593,3 @@ export function useOdds() {
   }
   return context;
 }
-
-

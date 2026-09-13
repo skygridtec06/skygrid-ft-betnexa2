@@ -707,19 +707,23 @@ router.post('/execute', checkAdmin, async (req, res) => {
     console.log(`✅ Execute complete: ${results.added.length} added, ${results.failed.length} failed`);
 
     res.json({
-      success: true,
+      success: results.added.length > 0 || results.failed.length === 0,
       message: `Successfully added ${results.added.length} games to the site`,
       games_added: results.added.length,
       games_failed: results.failed.length,
-      results
+      results,
+      failed_games: results.failed
     });
 
   } catch (error) {
-    console.error('❌ Execute error:', error.message);
+    console.error('❌ Execute error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to add games',
-      details: error.message
+      details: error.message || String(error),
+      code: error.code,
+      hint: error.hint,
+      details_from_database: error.details
     });
   }
 });
