@@ -103,7 +103,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
     onFirstPage?: (games: any[]) => void,
     status?: string
   ) => {
-    const pageSize = status === 'upcoming' ? 1000 : 250;
+    const pageSize = status === 'upcoming' ? 999 : 250;
     const allGames: any[] = [];
     const fetchPage = async (page: number) => {
       const response = await fetch(

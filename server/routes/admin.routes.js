@@ -1011,7 +1011,7 @@ router.get('/games', async (req, res) => {
 
     const requestedPage = Number.parseInt(req.query.page, 10);
     if (Number.isInteger(requestedPage) && requestedPage >= 0) {
-      const pageSize = Math.min(Math.max(Number.parseInt(req.query.page_size, 10) || 250, 50), 1000);
+      const pageSize = Math.min(Math.max(Number.parseInt(req.query.page_size, 10) || 250, 50), 999);
       const requestedStatus = typeof req.query.status === 'string' ? req.query.status.trim() : '';
       const from = requestedPage * pageSize;
       const to = from + pageSize - 1;
