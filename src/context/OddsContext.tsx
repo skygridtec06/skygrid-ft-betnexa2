@@ -97,13 +97,17 @@ export function OddsProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const fetchAllGames = useCallback(async (apiUrl: string, signal?: AbortSignal) => {
+  const fetchAllGames = useCallback(async (
+    apiUrl: string,
+    signal?: AbortSignal,
+    onFirstPage?: (games: any[]) => void
+  ) => {
+    // Keep the first response small enough to render quickly. Four pages are
+    // fetched concurrently below, so reducing page size does not bring back
+    // the old all-pages sequential delay.
     const pageSize = 250;
     const allGames: any[] = [];
-    let page = 0;
-    let hasMore = true;
-
-    while (hasMore) {
+    const fetchPage = async (page: number) => {
       const response = await fetch(
         `${apiUrl}/admin/games?page=${page}&page_size=${pageSize}`,
         { signal, keepalive: true }
@@ -117,9 +121,30 @@ export function OddsProvider({ children }: { children: ReactNode }) {
         throw new Error('Games response did not contain a valid page');
       }
 
-      allGames.push(...data.games);
-      hasMore = data.has_more === true;
-      page += 1;
+      if (page === 0 && onFirstPage) {
+        onFirstPage(data.games);
+      }
+      return data;
+    };
+
+    let page = 0;
+    let firstPage = await fetchPage(page);
+    allGames.push(...firstPage.games);
+    let hasMore = firstPage.has_more === true;
+    page += 1;
+
+    // Keep the database load bounded while avoiding dozens of sequential
+    // round trips for large datasets.
+    while (hasMore) {
+      const pages = Array.from({ length: 4 }, (_, index) => page + index);
+      const results = await Promise.all(pages.map((pageNumber) => fetchPage(pageNumber)));
+
+      for (const data of results) {
+        allGames.push(...data.games);
+      }
+
+      hasMore = results[results.length - 1]?.has_more === true;
+      page += pages.length;
 
       if (page > 10000) {
         throw new Error('Games pagination exceeded the expected page count');
@@ -144,7 +169,37 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       
       console.log('🔄 Fetching fresh games from:', apiUrl);
 
-      const data = await fetchAllGames(apiUrl);
+      const showFirstPage = (firstPage: any[]) => {
+        const firstGames: GameOdds[] = firstPage.map((g: any) => ({
+          id: g.game_id || g.id,
+          league: g.league || '',
+          homeTeam: g.home_team,
+          awayTeam: g.away_team,
+          homeOdds: parseFloat(g.home_odds) || 2.0,
+          drawOdds: parseFloat(g.draw_odds) || 3.0,
+          awayOdds: parseFloat(g.away_odds) || 3.0,
+          time: g.scheduled_time || g.time || new Date().toISOString(),
+          status: g.status || 'upcoming',
+          markets: g.markets || {},
+          homeScore: g.home_score || 0,
+          awayScore: g.away_score || 0,
+          minute: g.minute || 0,
+          seconds: 0,
+          kickoffStartTime: g.kickoff_start_time || undefined,
+          isKickoffStarted: g.is_kickoff_started || false,
+          gamePaused: g.game_paused || false,
+          kickoffPausedAt: g.kickoff_paused_at || undefined,
+          isHalftime: g.is_halftime || false,
+          sport: g.sport || 'football',
+        }));
+        const visibleGames = mergePendingLocalGames(firstGames);
+        setGames(visibleGames);
+        gamesRef.current = visibleGames;
+        setIsLoading(false);
+        console.log('⚡ Rendered first game page:', visibleGames.length);
+      };
+
+      const data = await fetchAllGames(apiUrl, undefined, showFirstPage);
       console.log('📊 Loaded all game pages');
 
       if (data.success && Array.isArray(data.games)) {
