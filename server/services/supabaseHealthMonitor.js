@@ -34,6 +34,7 @@ class SupabaseHealthMonitor {
       activeConnections: 0,
       maxConnections: 10
     };
+    this.healthCheckInProgress = false;
 
     this.thresholds = {
       healthCheckInterval: 30000, // Check every 30 seconds (reduced from 60 to be more responsive)
@@ -83,6 +84,10 @@ class SupabaseHealthMonitor {
   }
 
   async performFullHealthCheck() {
+    if (this.healthCheckInProgress) return;
+    this.healthCheckInProgress = true;
+
+    try {
     this.metrics.totalHealthChecks++;
     const checkStart = Date.now();
 
@@ -128,6 +133,9 @@ class SupabaseHealthMonitor {
 
     this.metrics.lastFullCheck = new Date();
     this.logServiceStatus();
+    } finally {
+      this.healthCheckInProgress = false;
+    }
   }
 
   async checkDatabase() {
@@ -150,10 +158,14 @@ class SupabaseHealthMonitor {
 
       // Test database with a lightweight read query that works with the anon client.
       // Using count-based queries can fail on RLS-enabled tables even when the DB is reachable.
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
       const { data, error } = await supabase
         .from('users')
         .select('id')
-        .limit(1);
+        .limit(1)
+        .abortSignal(controller.signal);
+      clearTimeout(timeout);
 
       const responseTime = Date.now() - startTime;
       this.services[service].responseTime = responseTime;

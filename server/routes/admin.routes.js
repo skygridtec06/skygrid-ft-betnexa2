@@ -1009,6 +1009,68 @@ router.get('/games', async (req, res) => {
       return res.status(503).json({ error: 'Service unavailable', details: 'Database not initialized', success: false });
     }
 
+    const requestedPage = Number.parseInt(req.query.page, 10);
+    if (Number.isInteger(requestedPage) && requestedPage >= 0) {
+      const pageSize = Math.min(Math.max(Number.parseInt(req.query.page_size, 10) || 250, 50), 500);
+      const from = requestedPage * pageSize;
+      const to = from + pageSize - 1;
+      const { data: games, error: gamesError, count } = await supabase
+        .from('games')
+        .select('*', { count: 'exact' })
+        .order('id', { ascending: true })
+        .range(from, to);
+
+      if (gamesError) throw gamesError;
+
+      const gameIds = (games || []).map((game) => game.id).filter(Boolean);
+      const { data: markets, error: marketsError } = gameIds.length > 0
+        ? await supabase
+          .from('markets')
+          .select('game_id, market_key, odds')
+          .in('game_id', gameIds)
+        : { data: [], error: null };
+      if (marketsError) throw marketsError;
+
+      const marketsByGame = {};
+      const hotGameIds = new Set();
+      for (const market of markets || []) {
+        if (!marketsByGame[market.game_id]) marketsByGame[market.game_id] = {};
+        if (market.market_key === '__hot') {
+          hotGameIds.add(market.game_id);
+        } else if (market.market_key && market.odds != null) {
+          marketsByGame[market.game_id][market.market_key] = parseFloat(market.odds);
+        }
+      }
+
+      const getSportFromGameId = (gameId) => {
+        if (!gameId) return 'football';
+        if (gameId.startsWith('ab-') || gameId.startsWith('bb-')) return 'basketball';
+        if (gameId.startsWith('tn-')) return 'tennis';
+        if (gameId.startsWith('ck-')) return 'cricket';
+        if (gameId.startsWith('bx-')) return 'boxing';
+        return 'football';
+      };
+
+      const result = (games || []).map((game) => ({
+        ...game,
+        markets: marketsByGame[game.id] || {},
+        is_hot: hotGameIds.has(game.id),
+        sport: getSportFromGameId(game.game_id),
+      }));
+      const totalGames = count || 0;
+
+      res.set('Cache-Control', 'no-store');
+      return res.json({
+        success: true,
+        games: result,
+        total_games: totalGames,
+        page: requestedPage,
+        page_size: pageSize,
+        has_more: from + result.length < totalGames,
+        pagination: { complete: from + result.length >= totalGames }
+      });
+    }
+
     // Supabase applies a server-side maximum of 1,000 rows to each request.
     // Fetching a large range does not bypass that limit, so page until all rows
     // have been loaded for the public upcoming-games list.
@@ -1064,7 +1126,18 @@ router.get('/games', async (req, res) => {
     // Game lists must reflect admin mutations immediately; CDN caching can reintroduce
     // a pre-insert response and make a newly created game appear to vanish.
     res.set('Cache-Control', 'no-store');
-    res.json({ success: true, games: result });
+    res.json({
+      success: true,
+      games: result,
+      total_games: games.length,
+      total_markets: allMarkets.length,
+      pagination: {
+        page_size: 1000,
+        games_pages: Math.ceil(games.length / 1000),
+        markets_pages: Math.ceil(allMarkets.length / 1000),
+        complete: true
+      }
+    });
   } catch (error) {
     console.error('❌ Get games error:', error.message || error);
     res.status(500).json({

@@ -45,6 +45,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   const gamesRef = useRef<GameOdds[]>([]);
   const kickoffTimesRef = useRef<Record<string, number>>({}); // Track when each game kicked off
   const fetchInProgressRef = useRef(false); // Prevent duplicate fetches
+  const refreshInProgressRef = useRef(false); // Prevent overlapping full database scans
   const pendingLocalGamesRef = useRef<Map<string, { game: GameOdds; createdAt: number }>>(new Map());
 
   const mergePendingLocalGames = useCallback((serverGames: GameOdds[]) => {
@@ -96,6 +97,45 @@ export function OddsProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  const fetchAllGames = useCallback(async (apiUrl: string, signal?: AbortSignal) => {
+    const pageSize = 250;
+    const allGames: any[] = [];
+    let page = 0;
+    let hasMore = true;
+    let totalGames = 0;
+
+    while (hasMore) {
+      const response = await fetch(
+        `${apiUrl}/admin/games?page=${page}&page_size=${pageSize}`,
+        { signal, keepalive: true }
+      );
+      if (!response.ok) {
+        throw new Error(`Games request failed with HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (!data.success || !Array.isArray(data.games)) {
+        throw new Error('Games response did not contain a valid page');
+      }
+
+      allGames.push(...data.games);
+      totalGames = Number(data.total_games) || allGames.length;
+      hasMore = data.has_more === true;
+      page += 1;
+
+      if (page > Math.ceil(Math.max(totalGames, allGames.length) / pageSize) + 1) {
+        throw new Error('Games pagination exceeded the expected page count');
+      }
+    }
+
+    return {
+      success: true,
+      games: allGames,
+      total_games: totalGames,
+      pagination: { complete: true }
+    };
+  }, []);
+
   // Fetch games from database - immediately on component mount, not in useEffect
   const performFetch = useCallback(async () => {
     if (fetchInProgressRef.current) return;
@@ -106,17 +146,17 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       
       console.log('🔄 Fetching fresh games from:', apiUrl);
 
-      const response = await fetch(`${apiUrl}/admin/games`, {
-        keepalive: true,
-      });
+      const data = await fetchAllGames(apiUrl);
+      console.log('📊 Loaded all game pages');
 
-      console.log('📊 Fetch response status:', response.status);
-
-      if (response.ok) {
-        const data = await response.json();
-        
-        if (data.success && Array.isArray(data.games)) {
-          console.log('✅ Successfully loaded', data.games.length, 'games from API');
+      if (data.success && Array.isArray(data.games)) {
+          console.log(
+            '✅ Successfully loaded',
+            data.games.length,
+            'of',
+            data.total_games ?? data.games.length,
+            'games from API'
+          );
           
           // Transform database games to GameOdds format
           const transformedGames: GameOdds[] = data.games.map((g: any) => ({
@@ -162,15 +202,10 @@ export function OddsProvider({ children }: { children: ReactNode }) {
             }
           }
           setLoadError(null);
-        } else {
-          console.warn('⚠️ Invalid response format:', data);
-          preserveCurrentGames();
-          setLoadError(null); // Don't show error, just start with empty games
-        }
       } else {
-        console.warn('⚠️ API returned non-OK status:', response.status);
+        console.warn('⚠️ Invalid response format:', data);
         preserveCurrentGames();
-        setLoadError(null); // Don't block app from loading
+        setLoadError(null);
       }
     } catch (error: any) {
       if (error?.name !== 'AbortError') {
@@ -182,7 +217,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       fetchInProgressRef.current = false;
     }
-  }, [mergePendingLocalGames, preserveCurrentGames]);
+  }, [fetchAllGames, mergePendingLocalGames, preserveCurrentGames]);
 
   useEffect(() => {
     try {
@@ -326,103 +361,6 @@ export function OddsProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(refreshInterval);
   }, []);
 
-  // Fast market change detection - check for updated games every 2 seconds (faster than before)
-  // This ensures admins' market updates appear to all users quickly
-  useEffect(() => {
-    const marketCheckInterval = setInterval(async () => {
-      if (gamesRef.current.length === 0) return;
-      
-      const apiUrl = import.meta.env.VITE_API_URL || 'https://www.betnexabackend.co.ke';
-      
-      try {
-        const response = await fetch(`${apiUrl}/api/admin/games`, {
-          keepalive: true,
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && Array.isArray(data.games)) {
-            // Check each game for market changes
-            let hasMarketUpdates = false;
-            
-            for (const newGame of data.games) {
-              const gameId = newGame.game_id || newGame.id;
-              const currentGame = gamesRef.current.find(g => g.id === gameId);
-              
-              if (currentGame) {
-                // Check if markets have changed (use JSON stringify for deep comparison)
-                const newMarketsStr = JSON.stringify((newGame.markets || {}) || {});
-                const currentMarketsStr = JSON.stringify((currentGame.markets || {}) || {});
-                
-                if (newMarketsStr !== currentMarketsStr) {
-                  console.log(`📊 [MARKET UPDATE] Market change detected for ${gameId}: ${newGame.home_team} vs ${newGame.away_team}`);
-                  console.log(`   Old markets keys: ${Object.keys(currentGame.markets || {}).length}`);
-                  console.log(`   New markets keys: ${Object.keys(newGame.markets || {}).length}`);
-                  
-                  // Log specific market changes for debugging
-                  for (const [key, value] of Object.entries(newGame.markets || {})) {
-                    const oldValue = currentGame.markets?.[key];
-                    if (oldValue !== value) {
-                      console.log(`   ${key}: ${oldValue} → ${value}`);
-                    }
-                  }
-                  
-                  hasMarketUpdates = true;
-                  break; // Found an update, proceed with refresh
-                }
-              }
-            }
-            
-            // If we detected market changes, refresh the full game list immediately
-            if (hasMarketUpdates) {
-              console.log('🔄 [MARKET UPDATE] Market changes detected - refreshing games for all users');
-              setGames(prev => {
-                const transformedGames: GameOdds[] = data.games.map((g: any) => ({
-                  id: g.game_id || g.id,
-                  league: g.league || '',
-                  homeTeam: g.home_team,
-                  awayTeam: g.away_team,
-                  homeOdds: parseFloat(g.home_odds) || 2.0,
-                  drawOdds: parseFloat(g.draw_odds) || 3.0,
-                  awayOdds: parseFloat(g.away_odds) || 3.0,
-                  time: g.scheduled_time || g.time || new Date().toISOString(),
-                  status: g.status || 'upcoming',
-                  markets: g.markets || {},
-                  homeScore: g.home_score || 0,
-                  awayScore: g.away_score || 0,
-                  minute: g.minute || 0,
-                  seconds: 0,
-                  kickoffStartTime: g.kickoff_start_time || undefined,
-                  isKickoffStarted: g.is_kickoff_started || false,
-                  gamePaused: g.game_paused || false,
-                  kickoffPausedAt: g.kickoff_paused_at || undefined,
-                  isHalftime: g.is_halftime || false,
-                  isHot: g.is_hot || false,
-                }));
-                
-                const seenIds = new Set<string>();
-                const deduplicatedGames = transformedGames.filter(game => {
-                  if (seenIds.has(game.id)) return false;
-                  seenIds.add(game.id);
-                  return true;
-                });
-                
-                const sortedGames = mergePendingLocalGames(deduplicatedGames);
-                console.log(`✅ [MARKET UPDATE] Updated ${sortedGames.length} games with new market data`);
-                gamesRef.current = sortedGames;
-                return sortedGames;
-              });
-            }
-          }
-        }
-      } catch (error) {
-        // Silently ignore market check errors
-      }
-    }, 2000); // Check every 2 seconds for market changes (faster detection)
-    
-    return () => clearInterval(marketCheckInterval);
-  }, []);
-
   // ⛔ Daily schedule maintenance DISABLED — automatic bootstrap-schedule fetch removed
   // useEffect(() => {
   //   const ensureSchedule = async () => {
@@ -446,6 +384,9 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   // }, []);
 
   const refreshGames = async () => {
+    if (refreshInProgressRef.current) return;
+    refreshInProgressRef.current = true;
+
     try {
       const apiUrl = import.meta.env.VITE_API_URL || 'https://www.betnexabackend.co.ke';
       
@@ -454,16 +395,15 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       // than Supabase's 1,000-row response limit.
       const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      const response = await fetch(`${apiUrl}/api/admin/games`, {
-        signal: controller.signal,
-        keepalive: true,
-      });
+      const data = await fetchAllGames(`${apiUrl}/api`, controller.signal);
 
       clearTimeout(timeoutId);
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && Array.isArray(data.games)) {
+      if (data.success && Array.isArray(data.games)) {
+          if (data.pagination?.complete !== true) {
+            console.warn('⚠️ Games response did not confirm complete pagination:', data.pagination);
+          }
+
           // Transform database games to GameOdds format
           const transformedGames: GameOdds[] = data.games.map((g: any) => ({
             id: g.game_id || g.id,
@@ -502,9 +442,6 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           const sortedGames = mergePendingLocalGames(deduplicatedGames);
           setGames(sortedGames);
           gamesRef.current = sortedGames;
-        } else {
-          preserveCurrentGames();
-        }
       } else {
         preserveCurrentGames();
       }
@@ -513,6 +450,8 @@ export function OddsProvider({ children }: { children: ReactNode }) {
         console.error('❌ Error refreshing games:', error);
       }
       preserveCurrentGames();
+    } finally {
+      refreshInProgressRef.current = false;
     }
   };
 
