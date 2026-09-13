@@ -1011,7 +1011,7 @@ router.get('/games', async (req, res) => {
 
     const requestedPage = Number.parseInt(req.query.page, 10);
     if (Number.isInteger(requestedPage) && requestedPage >= 0) {
-      const pageSize = Math.min(Math.max(Number.parseInt(req.query.page_size, 10) || 250, 50), 999);
+      const pageSize = Math.min(Math.max(Number.parseInt(req.query.page_size, 10) || 250, 50), 500);
       const requestedStatus = typeof req.query.status === 'string' ? req.query.status.trim() : '';
       const from = requestedPage * pageSize;
       const to = from + pageSize - 1;
@@ -1080,15 +1080,17 @@ router.get('/games', async (req, res) => {
     // Supabase applies a server-side maximum of 1,000 rows to each request.
     // Fetching a large range does not bypass that limit, so page until all rows
     // have been loaded for the public upcoming-games list.
-    const fetchAllRows = async (table, columns, orderColumn) => {
+    const requestedStatus = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+    const fetchAllRows = async (table, columns, orderColumn, status) => {
       const pageSize = 1000;
       const rows = [];
       for (let from = 0; ; from += pageSize) {
-        const { data, error } = await supabase
+        let query = supabase
           .from(table)
           .select(columns)
-          .order(orderColumn, { ascending: true })
-          .range(from, from + pageSize - 1);
+          .order(orderColumn, { ascending: true });
+        if (status) query = query.eq('status', status);
+        const { data, error } = await query.range(from, from + pageSize - 1);
         if (error) throw error;
         const page = data || [];
         rows.push(...page);
@@ -1098,7 +1100,7 @@ router.get('/games', async (req, res) => {
     };
 
     const [games, allMarkets] = await Promise.all([
-      fetchAllRows('games', '*', 'id'),
+      fetchAllRows('games', '*', 'id', requestedStatus),
       fetchAllRows('markets', 'game_id, market_key, odds', 'game_id'),
     ]);
 

@@ -103,7 +103,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
     onFirstPage?: (games: any[]) => void,
     status?: string
   ) => {
-    const pageSize = status === 'upcoming' ? 999 : 250;
+    const pageSize = 250;
     const allGames: any[] = [];
     const fetchPage = async (page: number) => {
       const response = await fetch(
@@ -197,10 +197,18 @@ export function OddsProvider({ children }: { children: ReactNode }) {
         console.log('⚡ Rendered first game page:', visibleGames.length);
       };
 
-      // Upcoming is the first user-visible section. Request it separately so
-      // every current upcoming match is rendered together instead of showing
-      // an ID-sorted subset while the full archive loads.
-      await fetchAllGames(apiUrl, undefined, showFirstPage, 'upcoming');
+      // Upcoming is the first user-visible section. Request the filtered
+      // complete list so it renders together instead of showing an ID-sorted
+      // subset while the full archive loads.
+      const upcomingResponse = await fetch(`${apiUrl}/admin/games?status=upcoming`, { keepalive: true });
+      if (!upcomingResponse.ok) {
+        throw new Error(`Upcoming games request failed with HTTP ${upcomingResponse.status}`);
+      }
+      const upcomingData = await upcomingResponse.json();
+      if (!upcomingData.success || !Array.isArray(upcomingData.games)) {
+        throw new Error('Upcoming games response did not contain a valid list');
+      }
+      showFirstPage(upcomingData.games);
       const data = await fetchAllGames(apiUrl);
       console.log('📊 Loaded all game pages');
 
