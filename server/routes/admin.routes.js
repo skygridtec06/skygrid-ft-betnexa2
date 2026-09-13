@@ -1011,16 +1011,20 @@ router.get('/games', async (req, res) => {
 
     const requestedPage = Number.parseInt(req.query.page, 10);
     if (Number.isInteger(requestedPage) && requestedPage >= 0) {
-      const pageSize = Math.min(Math.max(Number.parseInt(req.query.page_size, 10) || 250, 50), 500);
+      const pageSize = Math.min(Math.max(Number.parseInt(req.query.page_size, 10) || 250, 50), 1000);
+      const requestedStatus = typeof req.query.status === 'string' ? req.query.status.trim() : '';
       const from = requestedPage * pageSize;
       const to = from + pageSize - 1;
       // Fetch one extra row so we can determine whether another page exists
       // without running an expensive exact-count query on every request.
-      const { data: pageRows, error: gamesError } = await supabase
+      let gamesQuery = supabase
         .from('games')
         .select('*')
-        .order('id', { ascending: true })
-        .range(from, to + 1);
+        .order('id', { ascending: true });
+      if (requestedStatus) {
+        gamesQuery = gamesQuery.eq('status', requestedStatus);
+      }
+      const { data: pageRows, error: gamesError } = await gamesQuery.range(from, to + 1);
 
       if (gamesError) throw gamesError;
 
@@ -1067,6 +1071,7 @@ router.get('/games', async (req, res) => {
         games: result,
         page: requestedPage,
         page_size: pageSize,
+        status: requestedStatus || null,
         has_more: hasMore,
         pagination: { complete: !hasMore }
       });

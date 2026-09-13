@@ -100,16 +100,14 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   const fetchAllGames = useCallback(async (
     apiUrl: string,
     signal?: AbortSignal,
-    onFirstPage?: (games: any[]) => void
+    onFirstPage?: (games: any[]) => void,
+    status?: string
   ) => {
-    // Keep the first response small enough to render quickly. Four pages are
-    // fetched concurrently below, so reducing page size does not bring back
-    // the old all-pages sequential delay.
-    const pageSize = 250;
+    const pageSize = status === 'upcoming' ? 1000 : 250;
     const allGames: any[] = [];
     const fetchPage = async (page: number) => {
       const response = await fetch(
-        `${apiUrl}/admin/games?page=${page}&page_size=${pageSize}`,
+        `${apiUrl}/admin/games?page=${page}&page_size=${pageSize}${status ? `&status=${encodeURIComponent(status)}` : ''}`,
         { signal, keepalive: true }
       );
       if (!response.ok) {
@@ -199,7 +197,11 @@ export function OddsProvider({ children }: { children: ReactNode }) {
         console.log('⚡ Rendered first game page:', visibleGames.length);
       };
 
-      const data = await fetchAllGames(apiUrl, undefined, showFirstPage);
+      // Upcoming is the first user-visible section. Request it separately so
+      // every current upcoming match is rendered together instead of showing
+      // an ID-sorted subset while the full archive loads.
+      await fetchAllGames(apiUrl, undefined, showFirstPage, 'upcoming');
+      const data = await fetchAllGames(apiUrl);
       console.log('📊 Loaded all game pages');
 
       if (data.success && Array.isArray(data.games)) {
