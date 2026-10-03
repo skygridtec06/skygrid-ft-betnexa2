@@ -265,6 +265,21 @@ async function sendActivationSms(phone, username, amount, newBalance) {
 }
 
 /**
+ * Sent when an admin updates a user's account balance.
+ */
+async function sendUserBalanceUpdateSms(phone, newBalance, updatedAt = new Date()) {
+  const timestamp = new Date(updatedAt).toLocaleString('en-KE', {
+    timeZone: 'Africa/Nairobi',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  const msg =
+    `Your BETNEXA account balance was updated on ${timestamp} EAT. ` +
+    `Your new balance is KSH ${Number(newBalance).toLocaleString('en-KE', { maximumFractionDigits: 2 })}.`;
+  return sendSms(phone, msg);
+}
+
+/**
  * Sent to users who have been inactive for a while (inactivity reminder cron).
  */
 async function sendInactivityReminderSms(phone, username) {
@@ -353,6 +368,7 @@ module.exports = {
   sendDepositSms,
   sendWithdrawalSms,
   sendActivationSms,
+  sendUserBalanceUpdateSms,
   sendInactivityReminderSms,
   sendBanSms,
   sendAdminDepositNotification,
