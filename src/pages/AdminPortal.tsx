@@ -4491,6 +4491,7 @@ const AdminPortal = () => {
                               size="sm"
                               variant="hero"
                               onClick={async () => {
+                                let balanceNotificationSent: boolean | null = null;
                                 try {
                                   const apiUrl = import.meta.env.VITE_API_URL || 'https://www.betnexabackend.co.ke';
 
@@ -4547,6 +4548,7 @@ const AdminPortal = () => {
                                       alert(`Error: ${data.error || 'Failed to update balance'}`);
                                       return;
                                     }
+                                    balanceNotificationSent = data.notificationSent === true;
                                   }
 
                                   // Update local state
@@ -4561,7 +4563,12 @@ const AdminPortal = () => {
                                   }
                                   setEditingUserId(null);
                                   setEditingUserData({});
-                                  alert('✅ User data updated successfully!');
+                                  const notificationMessage = balanceNotificationSent === null
+                                    ? ''
+                                    : balanceNotificationSent
+                                      ? ' The user was notified by SMS.'
+                                      : ' The balance was updated, but the user notification SMS could not be sent.';
+                                  alert(`✅ User data updated successfully!${notificationMessage}`);
                                 } catch (error) {
                                   console.error('Error saving user data:', error);
                                   alert('Failed to save user data');
