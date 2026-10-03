@@ -381,14 +381,26 @@ async function ensureUserDarajaFunding({
     return { success: false, error: userError?.message || 'User not found for balance credit' };
   }
 
-  const previousBalance = parseFloat(user.account_balance) || 0;
-  // FIX: Use nullish coalescing to fall back to account_balance for legacy users with NULL stakeable_balance
-  const prevStakeable = parseFloat(user.stakeable_balance) ?? (parseFloat(user.account_balance) || 0);
+  const storedBalance = user.account_balance == null ? NaN : Number(user.account_balance);
+  const storedStakeable = user.stakeable_balance == null ? NaN : Number(user.stakeable_balance);
+  const storedWithdrawable = Number(user.withdrawable_balance);
+  const previousBalance = Number.isFinite(storedBalance) && storedBalance >= 0
+    ? storedBalance
+    : Math.max(0, (Number.isFinite(storedStakeable) ? storedStakeable : 0) + (Number.isFinite(storedWithdrawable) ? storedWithdrawable : 0));
+  const prevStakeable = Number.isFinite(storedStakeable)
+    ? Math.min(previousBalance, Math.max(0, storedStakeable))
+    : Math.max(0, previousBalance - (Number.isFinite(storedWithdrawable) ? Math.max(0, storedWithdrawable) : 0));
   const creditedAmount = parseFloat(completedTx.amount) || 0;
   const newStakeable = prevStakeable + creditedAmount;
-  const newBalance = newStakeable + (parseFloat(user.withdrawable_balance) || 0);
+  const newBalance = previousBalance + creditedAmount;
+  const newWithdrawable = Math.max(0, newBalance - newStakeable);
 
-  const userUpdate = { account_balance: newBalance, stakeable_balance: newStakeable, updated_at: nowIso() };
+  const userUpdate = {
+    account_balance: newBalance,
+    stakeable_balance: newStakeable,
+    withdrawable_balance: newWithdrawable,
+    updated_at: nowIso(),
+  };
   if (paymentType === 'activation') {
     userUpdate.withdrawal_activated = true;
     userUpdate.withdrawal_activation_date = timestamp;
