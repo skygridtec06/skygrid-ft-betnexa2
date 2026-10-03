@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 
 const fs = require('fs');
 const path = require('path');
@@ -10,12 +10,14 @@ const envVars = {
   SUPABASE_ANON_KEY: "sb_publishable_Lc8dQIzND4_qyIbN2EuQrQ_0Ma0OINQ",
   VITE_API_URL: "https://betnexanewbackend.vercel.app",
   SERVER_PUBLIC_URL: "https://betnexanewbackend.vercel.app",
-  API_FOOTBALL_KEY: "afc8a85f7408df5bcfbc712aeb8e7453",
   TEXTSMS_API_KEY: "5e8a74e0f8eed3e7a9896401a91bc9a2",
   TEXTSMS_PARTNER_ID: "15957",
   TEXTSMS_SHORTCODE: "TextSMS",
   ADMIN_SMS_PHONE: "0740176944"
 };
+if (process.env.API_FOOTBALL_KEY) {
+  envVars.API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
+}
 
 // Create .env files
 const rootEnv = Object.entries(envVars)
@@ -40,12 +42,14 @@ const backendEnvVars = {
   DARAJA_TEST_SHORT_CODE: "4320291",
   DARAJA_TEST_TRANSACTION_TYPE: "CustomerPayBillOnline",
   DARAJA_TEST_CALLBACK_BASE_URL: "https://betnexanewbackend.vercel.app",
-  API_FOOTBALL_KEY: "afc8a85f7408df5bcfbc712aeb8e7453",
   TEXTSMS_API_KEY: "5e8a74e0f8eed3e7a9896401a91bc9a2",
   TEXTSMS_PARTNER_ID: "15957",
   TEXTSMS_SHORTCODE: "TextSMS",
   ADMIN_SMS_PHONE: "0740176944"
 };
+if (process.env.API_FOOTBALL_KEY) {
+  backendEnvVars.API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
+}
 
 const backendEnv = Object.entries(backendEnvVars)
   .map(([key, value]) => `${key}=${value}`)
@@ -60,5 +64,4 @@ console.log('================================');
 console.log(`Frontend (.env): ${Object.keys(envVars).length} variables`);
 console.log(`Backend (server/.env): ${Object.keys(backendEnvVars).length} variables`);
 console.log('\nâœ… All environment files configured!');
-
 

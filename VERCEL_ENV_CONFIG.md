@@ -15,7 +15,7 @@ VITE_API_URL=https://www.betnexabackend.co.ke
 SERVER_PUBLIC_URL=https://www.betnexabackend.co.ke
 
 ## Third-Party APIs
-API_FOOTBALL_KEY=afc8a85f7408df5bcfbc712aeb8e7453
+API_FOOTBALL_KEY=<configure as a sensitive Vercel environment variable>
 
 ## SMS Configuration
 TEXTSMS_API_KEY=5e8a74e0f8eed3e7a9896401a91bc9a2
@@ -47,7 +47,7 @@ DARAJA_TEST_TRANSACTION_TYPE=CustomerPayBillOnline
 DARAJA_TEST_CALLBACK_BASE_URL=https://www.betnexabackend.co.ke
 
 ## APIs
-API_FOOTBALL_KEY=afc8a85f7408df5bcfbc712aeb8e7453
+API_FOOTBALL_KEY=<configure as a sensitive Vercel environment variable>
 
 ## SMS Configuration
 TEXTSMS_API_KEY=5e8a74e0f8eed3e7a9896401a91bc9a2
@@ -99,4 +99,3 @@ Create a file called `env.json` with all variables and use Vercel CLI to bulk im
 - Backend URL updated from betnexarevivebackend.vercel.app to betnexabackend.co.ke
 - Sensitive variables (keys, secrets) should be added via Vercel Dashboard only
 - Never commit .env files to repository
-

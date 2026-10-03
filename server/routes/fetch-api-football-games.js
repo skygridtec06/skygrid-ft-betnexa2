@@ -350,245 +350,153 @@ function generateSeededOdds(fixtureId) {
 }
 
 // POST: Fetch prematch games from API Football (preview only, no save)
-// POST: Fetch preview - Get games from API Football with OPTIMIZATIONS for free tier
 router.post('/fetch-preview', checkAdmin, async (req, res) => {
   try {
-    const DAYS_TO_FETCH = Math.min(Math.max(parseInt(req.body.days, 10) || 5, 1), 15); // Default: 5 days (~hundreds of matches, ~10 API calls), max: 15 (~30 API calls, stays within free-tier 100/day quota)
-    console.log(`\n🔍 [API Football Fetch Preview - OPTIMIZED] Fetching prematch games for the next ${DAYS_TO_FETCH} days...`);
-    console.log(`   📊 Optimized for FREE TIER: bulk odds fetching, pagination, smart filtering`);
+    const isValidDate = value =>
+      typeof value === 'string' &&
+      /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+      !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`)) &&
+      new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
+    const today = new Date();
+    const defaultFrom = today.toISOString().slice(0, 10);
+    const defaultToDate = new Date(today);
+    defaultToDate.setUTCDate(defaultToDate.getUTCDate() + 7);
+    const from = req.body.from || defaultFrom;
+    const to = req.body.to || defaultToDate.toISOString().slice(0, 10);
 
-    // Use the configured API key for this fetch preview endpoint.
-    // Do not silently fall back to an old stale key because that hides the real issue.
-    const TEST_API_KEY = process.env.API_FOOTBALL_KEY || process.env.APISPORTS_KEY;
+    if (!isValidDate(from) || !isValidDate(to) || from > to) {
+      return res.status(400).json({
+        success: false,
+        error: 'A valid date range is required; the end date must not be before the start date.'
+      });
+    }
 
-    if (!TEST_API_KEY) {
+    console.log(`\n🔍 [API Football Fetch Preview] Fetching prematch games from ${from} to ${to}...`);
+
+    const apiKey = process.env.API_FOOTBALL_KEY || process.env.APISPORTS_KEY;
+    if (!apiKey) {
       return res.status(500).json({
         success: false,
         error: 'API_FOOTBALL_KEY not configured'
       });
     }
 
-    // Helper function for API calls with test key
-    async function apiGetTest(path, params = {}) {
-      const qs = new URLSearchParams(params).toString();
-      const url = `${API_BASE}${path}${qs ? `?${qs}` : ''}`;
-      
-      console.log(`   🔗 API Call: ${path} with params:`, params);
-
-      const resp = await fetch(url, {
-        headers: {
-          'x-apisports-key': TEST_API_KEY
-        }
+    async function apiGet(path, params = {}) {
+      const query = new URLSearchParams(params).toString();
+      const response = await fetch(`${API_BASE}${path}?${query}`, {
+        headers: { 'x-apisports-key': apiKey }
       });
 
-      if (!resp.ok) {
-        const body = await resp.text();
-        console.error(`   ❌ API Error ${resp.status}: ${body}`);
-        throw new Error(`API ${resp.status} on ${path}: ${body}`);
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`API ${response.status} on ${path}: ${body}`);
       }
 
-      const json = await resp.json();
+      const json = await response.json();
       if (json?.errors && Object.keys(json.errors).length > 0) {
-        const providerError = Object.values(json.errors).join('; ');
-        throw new Error(`API-Football provider error: ${providerError}`);
+        throw new Error(`API-Football provider error: ${Object.values(json.errors).join('; ')}`);
       }
-      console.log(`   ✅ API Response received`);
       return json;
     }
 
+    async function apiGetAllPages(path, params = {}) {
+      const items = [];
+      let page = 1;
+      let lastPage = 1;
+
+      do {
+        const json = await apiGet(path, { ...params, page });
+        const pageItems = json.response || [];
+        items.push(...pageItems);
+
+        const reportedLastPage = Number(json.paging?.total);
+        lastPage = Number.isInteger(reportedLastPage) && reportedLastPage > 0
+          ? reportedLastPage
+          : (pageItems.length >= 100 ? page + 1 : page);
+        page += 1;
+      } while (page <= lastPage);
+
+      return items;
+    }
+
+    const allFixtures = await apiGetAllPages('/fixtures', { from, to, timezone: TZ });
+    const fixtures = allFixtures
+      .filter(fixture => fixture?.fixture?.status?.short === 'NS');
+    const fixtureDates = [...new Set(fixtures
+      .map(fixture => fixture?.fixture?.date?.slice(0, 10))
+      .filter(Boolean))];
+    const warnings = [];
+    const oddsByFixture = new Map();
+    let nextDateIndex = 0;
+
+    const fetchOddsForNextDate = async () => {
+      while (nextDateIndex < fixtureDates.length) {
+        const date = fixtureDates[nextDateIndex++];
+        try {
+          const oddsEntries = await apiGetAllPages('/odds', { date, timezone: TZ });
+          for (const entry of oddsEntries) {
+            const fixtureId = entry?.fixture?.id;
+            if (!fixtureId) continue;
+            if (!oddsByFixture.has(fixtureId)) oddsByFixture.set(fixtureId, []);
+            oddsByFixture.get(fixtureId).push(entry);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          warnings.push({ date, error: message });
+          console.warn(`⚠️ Could not fetch odds for ${date}; fixtures will use fallback odds: ${message}`);
+        }
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(4, fixtureDates.length) }, () => fetchOddsForNextDate())
+    );
+
+    const seenFixtureIds = new Set();
+    const allMarketKeys = Object.values(REQUIRED_MARKETS).flat();
     const games = [];
 
-    // Build list of dates to fetch (today + next 2 days)
-    const datesToFetch = [];
-    for (let d = 0; d < DAYS_TO_FETCH; d++) {
-      const date = new Date();
-      date.setDate(date.getDate() + d);
-      datesToFetch.push(date.toISOString().split('T')[0]);
-    }
-    console.log(`   📅 Dates to fetch: ${datesToFetch.join(', ')}`);
+    for (const fixture of fixtures) {
+      const fixtureId = fixture?.fixture?.id;
+      const homeTeam = fixture?.teams?.home?.name;
+      const awayTeam = fixture?.teams?.away?.name;
+      if (!fixtureId || !homeTeam || !awayTeam || seenFixtureIds.has(fixtureId)) continue;
+      seenFixtureIds.add(fixtureId);
 
-    for (const dateStr of datesToFetch) {
-      try {
-        // Step 1: Fetch all fixtures for this date (simple call — page/per_page not supported)
-        console.log(`\n📅 Fetching fixtures for ${dateStr}...`);
+      const kickoffTime = fixture.fixture.date;
+      const leagueName = fixture?.league?.name || 'Football';
+      let marketOdds = chooseBestOddsSet(oddsByFixture.get(fixtureId) || []);
+      const hasValidMatchOdds = marketOdds?.home && marketOdds?.draw && marketOdds?.away;
+      if (!hasValidMatchOdds) marketOdds = generateSeededOdds(fixtureId);
 
-        const fixturesJson = await apiGetTest('/fixtures', {
-          date: dateStr,
-          timezone: TZ,
-        });
-
-        const allFixtures = fixturesJson.response || [];
-        console.log(`   📊 Total fixtures on ${dateStr}: ${allFixtures.length}`);
-
-        if (allFixtures.length === 0) {
-          console.log(`   ⚠️ No fixtures for ${dateStr}`);
-          continue;
-        }
-
-        // Filter to only Not Started (prematch) fixtures
-        const prematchFixtures = allFixtures.filter(f => f?.fixture?.status?.short === 'NS');
-        console.log(`   ⚽ ${prematchFixtures.length} prematch (NS) fixtures on ${dateStr}`);
-
-        if (prematchFixtures.length === 0) {
-          console.log(`   ⚠️ No prematch fixtures on ${dateStr}`);
-          continue;
-        }
-
-        // Step 2: Fetch odds in bulk for this date (single call)
-        console.log(`\n📈 Fetching bulk odds for ${dateStr}...`);
-        const oddsJson = await apiGetTest('/odds', { date: dateStr, timezone: TZ });
-        const allOddsPages = oddsJson.response || [];
-        console.log(`   📊 Odds entries for ${dateStr}: ${allOddsPages.length}`);
-
-        // Build a map: fixtureId -> odds rows
-        const oddsByFixture = new Map();
-        for (const entry of allOddsPages) {
-          const fid = entry?.fixture?.id;
-          if (!fid) continue;
-          if (!oddsByFixture.has(fid)) oddsByFixture.set(fid, []);
-          oddsByFixture.get(fid).push(entry);
-        }
-
-        // Step 3: Process each prematch fixture and match with odds
-        const fixturesWithoutBulkOdds = [];
-
-        for (const fixture of prematchFixtures) {
-          try {
-            const fixtureId = fixture?.fixture?.id;
-            if (!fixtureId) continue;
-
-            const homeTeam = fixture?.teams?.home?.name;
-            const awayTeam = fixture?.teams?.away?.name;
-            const leagueName = fixture?.league?.name || 'Football';
-            const kickoffTime = fixture?.fixture?.date;
-
-            if (!homeTeam || !awayTeam) continue;
-
-            // Get odds from the bulk fetch
-            const oddsRows = oddsByFixture.get(fixtureId) || [];
-            
-            if (oddsRows.length === 0) {
-              fixturesWithoutBulkOdds.push(fixture);
-              continue;
-            }
-
-            let marketOdds = chooseBestOddsSet(oddsRows);
-
-            if (!marketOdds || !marketOdds.home || !marketOdds.draw || !marketOdds.away) {
-              // Some fixtures have odds data but not valid 1X2 market labels.
-              // Generate deterministic seeded odds instead of dropping the match.
-              marketOdds = generateSeededOdds(fixtureId);
-            }
-
-            const kickoffEAT = toEAT(kickoffTime);
-            const allMarketKeys = Object.values(REQUIRED_MARKETS).flat();
-            const marketsWithOdds = allMarketKeys.filter(k => !!marketOdds[k]).length;
-
-            games.push({
-              api_fixture_id: fixtureId,
-              league: leagueName,
-              home_team: homeTeam,
-              away_team: awayTeam,
-              home_odds: marketOdds.home,
-              draw_odds: marketOdds.draw,
-              away_odds: marketOdds.away,
-              time_utc: kickoffTime,
-              time_eat: kickoffEAT,
-              markets: marketOdds,
-              markets_count: marketsWithOdds,
-              odds_source: marketOdds && Object.keys(marketOdds).length > 0 && (marketOdds.home && marketOdds.draw && marketOdds.away) ? 'api' : 'fallback'
-            });
-
-            console.log(`   ✅ Added: ${homeTeam} vs ${awayTeam} (${games.length}) — ${marketsWithOdds} market odds`);
-          } catch (fixtureErr) {
-            console.warn(`   ⚠️ Error processing fixture:`, fixtureErr.message);
-            continue;
-          }
-        }
-
-        // Second pass: ALL fixtures not in bulk odds get fallback odds — no per-fixture API calls
-        // (per-fixture calls cause timeouts; 2 bulk calls per day is fast enough)
-        const addedFixtureIds = new Set(games.map(g => g.api_fixture_id));
-        const remainingFixtures = fixturesWithoutBulkOdds.filter(f => !addedFixtureIds.has(f?.fixture?.id));
-
-        if (remainingFixtures.length > 0) {
-          console.log(`\n📋 Adding ${remainingFixtures.length} fixtures with fallback odds (no API odds available)...`);
-
-          for (const fixture of remainingFixtures) {
-            try {
-              const fixtureId = fixture?.fixture?.id;
-              const homeTeam = fixture?.teams?.home?.name;
-              const awayTeam = fixture?.teams?.away?.name;
-              const leagueName = fixture?.league?.name || 'Football';
-              const kickoffTime = fixture?.fixture?.date;
-
-              if (!fixtureId || !homeTeam || !awayTeam) continue;
-
-              // Generate unique odds per fixture using fixtureId as seed
-              const fallbackOdds = generateSeededOdds(fixtureId);
-
-              const kickoffEAT = toEAT(kickoffTime);
-              const allMarketKeys = Object.values(REQUIRED_MARKETS).flat();
-              const marketsWithOdds = allMarketKeys.filter(k => !!fallbackOdds[k]).length;
-
-              games.push({
-                api_fixture_id: fixtureId,
-                league: leagueName,
-                home_team: homeTeam,
-                away_team: awayTeam,
-                home_odds: fallbackOdds.home,
-                draw_odds: fallbackOdds.draw,
-                away_odds: fallbackOdds.away,
-                time_utc: kickoffTime,
-                time_eat: kickoffEAT,
-                markets: fallbackOdds,
-                markets_count: marketsWithOdds,
-                odds_source: 'fallback',
-              });
-            } catch (err) {
-              continue;
-            }
-          }
-          console.log(`   ✅ Added ${remainingFixtures.length} fixtures with fallback odds`);
-        }
-      } catch (dateErr) {
-        console.error(`❌ Error fetching fixtures for ${dateStr}:`, dateErr.message);
-        continue; // Skip this date, continue with next
-      }
-    }
-
-    console.log(`\n✅ Fetch OPTIMIZED - Summary for ${DAYS_TO_FETCH} days:`);
-    console.log(`   📊 Total matches fetched: ${games.length}`);
-    console.log(`   📈 Average per day: ${Math.round(games.length / DAYS_TO_FETCH)} matches`);
-    console.log(`   🚀 Estimated improvement: 5-7x more matches than before (was ~20/day, now ${Math.round(games.length / DAYS_TO_FETCH)}/day)`);
-    console.log(`   💾 API requests used: ~${Math.ceil(DAYS_TO_FETCH * 1.5)} (vs ~${Math.ceil(DAYS_TO_FETCH * 10)} before optimization)`);
-
-    if (games.length === 0) {
-      return res.json({
-        success: true,
-        message: `No prematch games found for the next ${DAYS_TO_FETCH} days with valid odds`,
-        game_count: 0,
-        games: [],
-        dates_checked: datesToFetch,
-        next_step: 'Try again later or check API Football for available matches',
-        optimization_notes: 'Endpoint is optimized for free tier with pagination (per_page=100) and bulk odds fetching'
+      games.push({
+        api_fixture_id: fixtureId,
+        league: leagueName,
+        home_team: homeTeam,
+        away_team: awayTeam,
+        home_odds: marketOdds.home,
+        draw_odds: marketOdds.draw,
+        away_odds: marketOdds.away,
+        time_utc: kickoffTime,
+        time_eat: toEAT(kickoffTime),
+        markets: marketOdds,
+        markets_count: allMarketKeys.filter(key => !!marketOdds[key]).length,
+        odds_source: hasValidMatchOdds ? 'api' : 'fallback'
       });
     }
 
     res.json({
       success: true,
-      message: `Found ${games.length} prematch games across ${DAYS_TO_FETCH} days ready to add`,
+      message: `Found ${games.length} prematch games from ${from} to ${to}`,
       game_count: games.length,
       matches_fetched: games.length,
-      dates_checked: datesToFetch,
-      average_per_day: Math.round(games.length / DAYS_TO_FETCH),
+      date_range: { from, to },
+      dates_checked: fixtureDates,
       max_limit: 'unlimited',
-      games: games,
-      optimization_notes: '✅ Optimized for free tier: pagination (100/page), bulk odds, reduced per-fixture calls',
-      next_step: 'Call /api/admin/fetch-api-football/execute with the games to add them to the site',
-      customize_days: 'Send { "days": N } in request body to fetch N days (default: 5, max: 15)'
+      games,
+      warnings,
+      next_step: 'Call /api/admin/fetch-api-football/execute with the games to add them to the site'
     });
-
   } catch (error) {
     console.error('❌ Fetch preview error:', error.message);
     console.error('Stack:', error.stack);
@@ -617,99 +525,135 @@ router.post('/execute', checkAdmin, async (req, res) => {
 
     const results = { added: [], failed: [], total_requested: gamesToAdd.length };
     const prefix = SPORT_PREFIXES[sport] || 'af';
+    const batchSize = 50;
 
-    for (const g of gamesToAdd) {
-      try {
-        const gameId = `${prefix}-${g.api_fixture_id}`;
+    for (let offset = 0; offset < gamesToAdd.length; offset += batchSize) {
+      const batch = gamesToAdd.slice(offset, offset + batchSize);
+      const records = [];
 
-        // Check if already exists
-        const { data: existing } = await supabase
-          .from('games')
-          .select('id')
-          .eq('game_id', gameId)
-          .maybeSingle();
-
-        if (existing) {
-          console.log(`   ⏭️ ${gameId} already exists, skipping`);
-          results.added.push({ game_id: gameId, status: 'already_exists' });
+      for (const game of batch) {
+        const gameId = `${prefix}-${game?.api_fixture_id}`;
+        if (!game?.api_fixture_id || !game.home_team || !game.away_team) {
+          results.failed.push({ game_id: gameId, error: 'Fixture ID and both team names are required' });
           continue;
         }
 
         const drawOdds = (sport === 'basketball' || sport === 'tennis' || sport === 'boxing')
-          ? 0 : (parseFloat(g.draw_odds) || parseFloat(g.markets?.draw) || 3.0);
+          ? 0 : (parseFloat(game.draw_odds) || parseFloat(game.markets?.draw) || 3.0);
+        records.push({
+          game,
+          gameData: {
+            game_id: gameId,
+            league: game.league || sport.charAt(0).toUpperCase() + sport.slice(1),
+            home_team: game.home_team,
+            away_team: game.away_team,
+            home_odds: parseFloat(game.home_odds) || 1.90,
+            draw_odds: drawOdds,
+            away_odds: parseFloat(game.away_odds) || 1.90,
+            time: game.time_utc || game.time_eat || new Date().toISOString(),
+            status: 'upcoming'
+          }
+        });
+      }
 
-        const gameData = {
-          game_id: gameId,
-          league: g.league || sport.charAt(0).toUpperCase() + sport.slice(1),
-          home_team: g.home_team,
-          away_team: g.away_team,
-          home_odds: parseFloat(g.home_odds) || 1.90,
-          draw_odds: drawOdds,
-          away_odds: parseFloat(g.away_odds) || 1.90,
-          time: g.time_utc || g.time_eat || new Date().toISOString(),
-          status: 'upcoming'
-        };
+      if (records.length === 0) continue;
 
-        const { data: game, error: insertErr } = await supabase
-          .from('games')
-          .insert([gameData])
-          .select()
-          .single();
+      const { data: insertedGames, error: batchError } = await supabase
+        .from('games')
+        .upsert(records.map(record => record.gameData), {
+          onConflict: 'game_id',
+          ignoreDuplicates: true
+        })
+        .select('id, game_id');
 
-        if (insertErr) {
-          console.error(`   ❌ Failed to insert ${gameId}:`, insertErr.message);
-          results.failed.push({ game_id: gameId, error: insertErr.message });
-          continue;
+      const insertedByGameId = new Map();
+      if (batchError) {
+        console.warn(`⚠️ Batch insert failed; retrying ${records.length} games individually:`, batchError.message);
+        for (const record of records) {
+          try {
+            const { data, error } = await supabase
+              .from('games')
+              .upsert(record.gameData, { onConflict: 'game_id', ignoreDuplicates: true })
+              .select('id, game_id');
+            if (error) throw error;
+            if (data?.length) insertedByGameId.set(record.gameData.game_id, data[0]);
+            else results.added.push({ game_id: record.gameData.game_id, status: 'already_exists' });
+          } catch (error) {
+            console.error(`   ❌ Failed to insert ${record.gameData.game_id}:`, error.message);
+            results.failed.push({ game_id: record.gameData.game_id, error: error.message });
+          }
         }
+      } else {
+        for (const game of insertedGames || []) insertedByGameId.set(game.game_id, game);
+        for (const record of records) {
+          if (!insertedByGameId.has(record.gameData.game_id)) {
+            results.added.push({ game_id: record.gameData.game_id, status: 'already_exists' });
+          }
+        }
+      }
 
-        // Insert markets
-        if (g.markets && typeof g.markets === 'object') {
-          const marketsToInsert = [];
-          for (const [key, odds] of Object.entries(g.markets)) {
-            const oddsVal = parseFloat(odds);
-            if (oddsVal && oddsVal >= 1.01) {
-              marketsToInsert.push({
-                game_id: game.id,
+      const marketsByGameId = new Map();
+      for (const record of records) {
+        const inserted = insertedByGameId.get(record.gameData.game_id);
+        if (!inserted) continue;
+
+        const marketRows = [];
+        if (record.game.markets && typeof record.game.markets === 'object') {
+          for (const [key, odds] of Object.entries(record.game.markets)) {
+            const oddsValue = parseFloat(odds);
+            if (oddsValue >= 1.01) {
+              marketRows.push({
+                game_id: inserted.id,
                 market_type: determineMarketType(key),
                 market_key: key,
-                odds: oddsVal
+                odds: oddsValue
               });
             }
           }
-          if (marketsToInsert.length > 0) {
-            const { error: mErr } = await supabase.from('markets').insert(marketsToInsert);
-            if (mErr) console.warn(`   ⚠️ Markets insert warning for ${gameId}:`, mErr.message);
-            else console.log(`   📊 Inserted ${marketsToInsert.length} markets for ${gameId}`);
-          }
         }
-
-        // Auto-mark as hot if from a popular league
-        if (isHotLeague(g.league)) {
-          await supabase.from('markets').insert({
-            game_id: game.id,
+        if (isHotLeague(record.game.league)) {
+          marketRows.push({
+            game_id: inserted.id,
             market_type: 'META',
             market_key: '__hot',
             odds: 1,
             updated_at: new Date().toISOString()
           });
-          console.log(`   🔥 Auto-marked as HOT (league: ${g.league})`);
         }
+        marketsByGameId.set(record.gameData.game_id, marketRows);
+      }
 
-        results.added.push({ game_id: gameId, status: 'added' });
-        console.log(`   ✅ Added: ${g.home_team} vs ${g.away_team} (${gameId})`);
-      } catch (gameErr) {
-        const gid = `${prefix}-${g.api_fixture_id}`;
-        console.error(`   ❌ Error adding ${gid}:`, gameErr.message);
-        results.failed.push({ game_id: gid, error: gameErr.message });
+      const marketRows = [...marketsByGameId.values()].flat();
+      if (marketRows.length > 0) {
+        const { error } = await supabase.from('markets').insert(marketRows);
+        if (error) {
+          console.warn('⚠️ Batch market insert failed; retrying markets per game:', error.message);
+          for (const [gameId, rows] of marketsByGameId) {
+            if (rows.length === 0) continue;
+            const { error: marketError } = await supabase.from('markets').insert(rows);
+            if (marketError) {
+              console.warn(`⚠️ Markets insert warning for ${gameId}:`, marketError.message);
+            }
+          }
+        }
+      }
+
+      for (const record of records) {
+        if (insertedByGameId.has(record.gameData.game_id)) {
+          results.added.push({ game_id: record.gameData.game_id, status: 'added' });
+        }
       }
     }
 
-    console.log(`✅ Execute complete: ${results.added.length} added, ${results.failed.length} failed`);
+    const addedCount = results.added.filter(result => result.status === 'added').length;
+    const skippedCount = results.added.filter(result => result.status === 'already_exists').length;
+    console.log(`✅ Execute complete: ${addedCount} added, ${skippedCount} skipped, ${results.failed.length} failed`);
 
     res.json({
-      success: results.added.length > 0 || results.failed.length === 0,
-      message: `Successfully added ${results.added.length} games to the site`,
-      games_added: results.added.length,
+      success: results.failed.length === 0 || addedCount > 0 || skippedCount > 0,
+      message: `Added ${addedCount} games; skipped ${skippedCount} existing games`,
+      games_added: addedCount,
+      games_skipped: skippedCount,
       games_failed: results.failed.length,
       results,
       failed_games: results.failed
@@ -745,7 +689,7 @@ router.post('/fetch-preview/basketball', checkAdmin, async (req, res) => {
   try {
     console.log(`\n🏀 [API Basketball Fetch Preview] Fetching basketball games for the next 3 days...`);
 
-    const BBALL_KEY = API_KEY || 'afc8a85f7408df5bcfbc712aeb8e7453';
+    const BBALL_KEY = API_KEY;
 
     if (!BBALL_KEY) {
       return res.status(500).json({ success: false, error: 'API key not configured' });
