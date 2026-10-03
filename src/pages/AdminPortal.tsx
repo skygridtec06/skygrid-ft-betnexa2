@@ -92,6 +92,14 @@ const sortGamesByKickoffTime = (gamesToSort: any[]) => {
   });
 };
 
+type C2bRecipient = {
+  id: string;
+  username?: string;
+  name?: string;
+  phone_number?: string;
+  account_balance?: number;
+};
+
 const AdminPortal = () => {
   const { matches, updateScore, setFinalScore } = useMatches();
   const { bets, syncBalance, updateBetStatus, fetchAllBets, setBets } = useBets();
@@ -393,6 +401,12 @@ const AdminPortal = () => {
   const [c2bMismatches, setC2bMismatches] = useState<any[]>([]);
   const [loadingC2bMismatches, setLoadingC2bMismatches] = useState(false);
   const [c2bMismatchesError, setC2bMismatchesError] = useState("");
+  const [c2bUserQueries, setC2bUserQueries] = useState<Record<string, string>>({});
+  const [c2bUserResults, setC2bUserResults] = useState<Record<string, C2bRecipient[]>>({});
+  const [c2bSearchingMismatchId, setC2bSearchingMismatchId] = useState<string | null>(null);
+  const [c2bSelectedUsers, setC2bSelectedUsers] = useState<Record<string, C2bRecipient>>({});
+  const [c2bResolvingMismatchId, setC2bResolvingMismatchId] = useState<string | null>(null);
+  const [c2bResolutionMessages, setC2bResolutionMessages] = useState<Record<string, string>>({});
   const [activationFees, setActivationFees] = useState<any[]>([]);
   
   // User balance editing state
@@ -1060,6 +1074,7 @@ const AdminPortal = () => {
           time: data.game.time || kickoffTime,
           status: data.game.status || 'upcoming',
           markets: data.game.markets || {},
+          isAdminAdded: true,
         };
         addGame(gameData);
         setNewGame({
@@ -2384,6 +2399,97 @@ const AdminPortal = () => {
       setC2bMismatchesError(error instanceof Error ? error.message : 'Failed to load C2B mismatches');
     } finally {
       setLoadingC2bMismatches(false);
+    }
+  };
+
+  const searchC2bRecipients = async (mismatchId: string) => {
+    const query = (c2bUserQueries[mismatchId] || "").trim();
+    if (query.length < 2) {
+      setC2bResolutionMessages((previous) => ({ ...previous, [mismatchId]: "Enter at least 2 characters to search." }));
+      return;
+    }
+
+    setC2bSearchingMismatchId(mismatchId);
+    setC2bResolutionMessages((previous) => ({ ...previous, [mismatchId]: "" }));
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'https://www.betnexabackend.co.ke';
+      const phone = loggedInUser?.phone || '';
+      const response = await fetch(
+        `${apiUrl}/api/admin/c2b-mismatches/search-users?q=${encodeURIComponent(query)}&phone=${encodeURIComponent(phone)}`
+      );
+      const data = await response.json();
+      if (!response.ok || !data.success || !Array.isArray(data.users)) {
+        throw new Error(data.details || data.error || 'Failed to search users');
+      }
+      setC2bUserResults((previous) => ({ ...previous, [mismatchId]: data.users }));
+      if (data.users.length === 0) {
+        setC2bResolutionMessages((previous) => ({ ...previous, [mismatchId]: "No users matched that search." }));
+      }
+    } catch (error) {
+      setC2bResolutionMessages((previous) => ({
+        ...previous,
+        [mismatchId]: error instanceof Error ? error.message : "Failed to search users.",
+      }));
+    } finally {
+      setC2bSearchingMismatchId(null);
+    }
+  };
+
+  const resolveC2bMismatch = async (mismatch: any) => {
+    const mismatchId = String(mismatch.id || "");
+    const recipient = c2bSelectedUsers[mismatchId];
+    if (!recipient) return;
+
+    const amount = Number(mismatch.amount || 0);
+    const recipientName = recipient.name || recipient.username || recipient.phone_number || "selected user";
+    if (!window.confirm(`Credit KSH ${amount.toLocaleString()} from receipt ${mismatch.mpesa_receipt || "unknown"} to ${recipientName} (${recipient.phone_number || "no phone number"})?`)) {
+      return;
+    }
+
+    setC2bResolvingMismatchId(mismatchId);
+    setC2bResolutionMessages((previous) => ({ ...previous, [mismatchId]: "" }));
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'https://www.betnexabackend.co.ke';
+      const response = await fetch(`${apiUrl}/api/admin/c2b-mismatches/${encodeURIComponent(mismatchId)}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: loggedInUser?.phone || "", userId: recipient.id }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to credit the selected user");
+      }
+
+      setC2bResolutionMessages((previous) => ({
+        ...previous,
+        [mismatchId]: data.alreadyResolved
+          ? "This payment was already resolved."
+          : `Credited KSH ${amount.toLocaleString()} to ${recipient.name || recipient.username || recipient.phone_number || "the selected user"}.${data.smsSent ? " Deposit SMS sent." : " The balance was credited, but the deposit SMS could not be sent."}`,
+      }));
+      setC2bMismatches((previous) => previous.map((item) => (
+        String(item.id || "") === mismatchId
+          ? {
+              ...item,
+              resolved_at: new Date().toISOString(),
+              resolved_user_id: data.user?.id || recipient.id,
+              resolved_user_phone: data.user?.phone_number || recipient.phone_number,
+              resolution_transaction_id: data.transaction?.transaction_id || item.resolution_transaction_id,
+            }
+          : item
+      )));
+      setC2bSelectedUsers((previous) => {
+        const updated = { ...previous };
+        delete updated[mismatchId];
+        return updated;
+      });
+      await fetchC2bMismatches();
+    } catch (error) {
+      setC2bResolutionMessages((previous) => ({
+        ...previous,
+        [mismatchId]: error instanceof Error ? error.message : "Failed to credit the selected user.",
+      }));
+    } finally {
+      setC2bResolvingMismatchId(null);
     }
   };
 
@@ -5137,17 +5243,134 @@ const AdminPortal = () => {
                             {formatTransactionDateInEAT(mismatch.created_at)} via {mismatch.method || 'M-Pesa C2B Paybill'}
                           </p>
                           <p className="mt-1 break-all text-xs text-muted-foreground">
-                            Account: {mismatch.account_reference || 'Not provided'} · Receipt: {mismatch.mpesa_receipt || 'Not provided'} · Payer phone: {mismatch.phone_number || 'Not provided'}
+                            Account: {mismatch.account_reference || 'Not provided'} · Receipt: {mismatch.mpesa_receipt || 'Not provided'} · Payer phone: {mismatch.phone_number || (mismatch.payer_phone_unavailable ? 'Unavailable in callback' : 'Not provided')}
                           </p>
+                          {mismatch.resolved_at && (
+                            <p className="mt-1 text-xs text-emerald-400">
+                              Credited to account phone: {mismatch.resolved_user_phone || 'Not available'}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="text-left md:text-right">
                         <p className="font-bold text-yellow-500">
                           KSH {Number(mismatch.amount || 0).toLocaleString()}
                         </p>
-                        <p className="mt-1 text-xs text-red-400">Pending manual resolution</p>
+                        <p className={`mt-1 text-xs ${mismatch.resolved_at ? "text-emerald-400" : "text-red-400"}`}>
+                          {mismatch.resolved_at ? "Resolved" : "Pending manual resolution"}
+                        </p>
                       </div>
                     </div>
+                    {!mismatch.resolved_at && (
+                      <div className="mt-4 space-y-3 border-t border-border pt-4">
+                        <p className="text-xs text-muted-foreground">
+                          Search for the account that should receive this payment. The selected user’s real account phone will be shown before crediting.
+                        </p>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <Input
+                            value={c2bUserQueries[String(mismatch.id)] || ""}
+                            onChange={(event) => {
+                              const mismatchId = String(mismatch.id);
+                              setC2bUserQueries((previous) => ({
+                                ...previous,
+                                [mismatchId]: event.target.value,
+                              }));
+                              setC2bSelectedUsers((previous) => {
+                                const updated = { ...previous };
+                                delete updated[mismatchId];
+                                return updated;
+                              });
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                void searchC2bRecipients(String(mismatch.id));
+                              }
+                            }}
+                            placeholder="Search by user's name, username, or phone"
+                            aria-label="Search user to receive C2B payment"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void searchC2bRecipients(String(mismatch.id))}
+                            disabled={c2bSearchingMismatchId === String(mismatch.id)}
+                          >
+                            {c2bSearchingMismatchId === String(mismatch.id)
+                              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              : <Users className="mr-2 h-4 w-4" />}
+                            Search users
+                          </Button>
+                        </div>
+                        {(c2bUserResults[String(mismatch.id)] || []).length > 0 && (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {c2bUserResults[String(mismatch.id)].map((recipient) => {
+                              const selected = c2bSelectedUsers[String(mismatch.id)]?.id === recipient.id;
+                              return (
+                                <button
+                                  key={recipient.id}
+                                  type="button"
+                                  onClick={() => setC2bSelectedUsers((previous) => ({
+                                    ...previous,
+                                    [String(mismatch.id)]: recipient,
+                                  }))}
+                                  className={`rounded-md border p-3 text-left text-sm transition-colors ${
+                                    selected ? "border-gold bg-gold/10" : "border-border hover:border-gold/50"
+                                  }`}
+                                >
+                                  <span className="block font-medium text-foreground">
+                                    {recipient.name || recipient.username || "BETNEXA user"}
+                                  </span>
+                                  {recipient.username && recipient.name && (
+                                    <span className="block text-xs text-muted-foreground">@{recipient.username}</span>
+                                  )}
+                                  <span className="mt-1 block text-xs text-foreground">
+                                    Account phone: {recipient.phone_number || "Not available"}
+                                  </span>
+                                  <span className="block text-xs text-muted-foreground">
+                                    Balance: KSH {Number(recipient.account_balance || 0).toLocaleString()}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {c2bResolutionMessages[String(mismatch.id)] && (
+                          <p role="status" className="text-xs text-muted-foreground">
+                            {c2bResolutionMessages[String(mismatch.id)]}
+                          </p>
+                        )}
+                        {c2bSelectedUsers[String(mismatch.id)] && (
+                          <div className="flex flex-col gap-3 rounded-md border border-gold/30 bg-gold/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="text-sm text-foreground">
+                                Credit <strong>KSH {Number(mismatch.amount || 0).toLocaleString()}</strong> to{" "}
+                                <strong>{c2bSelectedUsers[String(mismatch.id)].name || c2bSelectedUsers[String(mismatch.id)].username || "selected user"}</strong>
+                                {" "}({c2bSelectedUsers[String(mismatch.id)].phone_number || "no phone number"})
+                              </p>
+                              {!/^\+?[0-9]{7,15}$/.test(c2bSelectedUsers[String(mismatch.id)].phone_number || "") && (
+                                <p className="mt-1 text-xs text-destructive">
+                                  This account has no valid phone number, so it cannot receive the required deposit SMS.
+                                </p>
+                              )}
+                            </div>
+                            <Button
+                              type="button"
+                              onClick={() => void resolveC2bMismatch(mismatch)}
+                              disabled={
+                                c2bResolvingMismatchId === String(mismatch.id) ||
+                                !/^\+?[0-9]{7,15}$/.test(c2bSelectedUsers[String(mismatch.id)].phone_number || "")
+                              }
+                            >
+                              {c2bResolvingMismatchId === String(mismatch.id) && (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              )}
+                              {c2bResolvingMismatchId === String(mismatch.id) ? "Crediting..." : "Credit selected account"}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </Card>
                 ))}
               </div>

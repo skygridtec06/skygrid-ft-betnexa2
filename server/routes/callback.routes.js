@@ -11,6 +11,7 @@ const { ensureAdminDarajaTestFunding } = require('../services/adminDarajaTestFun
 const { ensureUserDarajaFunding, persistUserDarajaTerminalStatus } = require('../services/userDarajaFundingService');
 const { sendDepositSms, sendAdminDepositNotification } = require('../services/smsService.js');
 const { findUserByBetnexaId, findUserByPhoneNumber } = require('../services/betnexaIdService.js');
+const { getC2bPayerPhone } = require('../utils/c2bPhoneUtils.js');
 
 // PayHero callback endpoint has been removed - all deposits now use Daraja (Safaricom direct)
 
@@ -235,7 +236,12 @@ router.post('/c2b-confirmation', async (req, res) => {
 
     const accountNumber = String(BillRefNumber || InvoiceNumber || '').replace(/\s+/g, '').toUpperCase();
     const amount = parseFloat(TransAmount ?? Amount) || 0;
-    const phoneNumber = MSISDN || '';
+    let phoneNumber = '';
+    try {
+      phoneNumber = await getC2bPayerPhone(payload, supabase) || '';
+    } catch (phoneLookupError) {
+      console.error('❌ [C2B] Could not resolve callback MSISDN:', phoneLookupError.message);
+    }
     const mpesaReceipt = TransID || '';
     const payerName = [FirstName, MiddleName, LastName].filter(Boolean).join(' ');
 

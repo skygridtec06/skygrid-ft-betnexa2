@@ -23,6 +23,7 @@ export interface GameOdds {
   isHalftime?: boolean;
   sport?: string; // 'football' | 'basketball' | 'tennis' | 'cricket' | 'boxing'
   isHot?: boolean; // Hot/popular match
+  isAdminAdded?: boolean;
 }
 
 interface OddsContextType {
@@ -38,6 +39,13 @@ interface OddsContextType {
 
 const GAME_CACHE_KEY = "betnexa_games_cache";
 
+const sortGamesAdminFirst = (games: GameOdds[]) => (
+  [...games].sort((a, b) => (
+    Number(Boolean(b.isAdminAdded)) - Number(Boolean(a.isAdminAdded)) ||
+    a.id.localeCompare(b.id)
+  ))
+);
+
 const readCachedGames = (): GameOdds[] => {
   try {
     const cached = localStorage.getItem(GAME_CACHE_KEY);
@@ -46,7 +54,7 @@ const readCachedGames = (): GameOdds[] => {
     const parsed: unknown = JSON.parse(cached);
     if (!Array.isArray(parsed)) return [];
 
-    return parsed.filter((game): game is GameOdds => (
+    return sortGamesAdminFirst(parsed.filter((game): game is GameOdds => (
       typeof game === "object" &&
       game !== null &&
       typeof game.id === "string" &&
@@ -57,7 +65,7 @@ const readCachedGames = (): GameOdds[] => {
       (game.status === "upcoming" || game.status === "live" || game.status === "finished") &&
       typeof game.markets === "object" &&
       game.markets !== null
-    ));
+    )));
   } catch (error) {
     console.warn("Unable to read cached games:", error);
     return [];
@@ -111,7 +119,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    return Array.from(merged.values()).sort((a, b) => a.id.localeCompare(b.id));
+    return sortGamesAdminFirst(Array.from(merged.values()));
   }, []);
 
   const preserveCurrentGames = useCallback(() => {
@@ -227,6 +235,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           isHalftime: g.is_halftime || false,
           sport: g.sport || 'football',
           isHot: g.is_hot || false,
+          isAdminAdded: g.is_admin_added === true,
         }));
         const visibleGames = mergePendingLocalGames([...gamesRef.current, ...firstGames]);
         setGames(visibleGames);
@@ -278,6 +287,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
             isHalftime: g.is_halftime || false,
             sport: g.sport || 'football',
             isHot: g.is_hot || false,
+            isAdminAdded: g.is_admin_added === true,
           }));
           
           // Remove duplicates by ID and sort by ID for stable ordering to prevent reranking/collision issues
@@ -524,6 +534,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
             gamePaused: g.game_paused || false,
             kickoffPausedAt: g.kickoff_paused_at || undefined,
             isHalftime: g.is_halftime || false,
+            isAdminAdded: g.is_admin_added === true,
             isHot: g.is_hot || false,
           }));
           
@@ -556,18 +567,17 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   };
 
   const addGame = (game: GameOdds) => {
-    pendingLocalGamesRef.current.set(game.id, { game, createdAt: Date.now() });
-    setGames((prev) => {
-      // Check for duplicates by ID
-      if (prev.some(g => g.id === game.id)) {
-        console.warn(`⚠️ Duplicate game detected with ID ${game.id}, skipping add`);
-        return prev;
-      }
-      // Add new game and maintain stable sort by ID
-      const updated = [...prev, game].sort((a, b) => a.id.localeCompare(b.id));
-      gamesRef.current = updated;
-      return updated;
-    });
+    if (gamesRef.current.some((existing) => existing.id === game.id)) {
+      console.warn(`⚠️ Duplicate game detected with ID ${game.id}, skipping add`);
+      return;
+    }
+
+    const adminGame = { ...game, isAdminAdded: true };
+    pendingLocalGamesRef.current.set(game.id, { game: adminGame, createdAt: Date.now() });
+    const updated = sortGamesAdminFirst([...gamesRef.current, adminGame]);
+    gamesRef.current = updated;
+    setGames(updated);
+    writeCachedGames(updated);
   };
 
   const updateGame = (id: string, updates: Partial<GameOdds>) => {
@@ -593,7 +603,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
         return game;
       });
       // Maintain stable sort order by ID to prevent reranking issues
-      const stableSorted = updated.sort((a, b) => a.id.localeCompare(b.id));
+      const stableSorted = sortGamesAdminFirst(updated);
       gamesRef.current = stableSorted;
       return stableSorted;
     });

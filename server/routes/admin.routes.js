@@ -17,11 +17,12 @@ const {
 } = require('../services/darajaTestService');
 const { registerC2BUrls } = require('../services/c2bService');
 const { backfillBetnexaIds } = require('../services/betnexaIdService');
+const { getC2bPayerPhone, normalizePhoneNumber } = require('../utils/c2bPhoneUtils');
 const {
   registerAdminDarajaTestAttempt,
   ensureAdminDarajaTestFunding,
 } = require('../services/adminDarajaTestFundingService');
-const { sendSms, sendActivationSms, sendWithdrawalSms, sendBetWonSms, sendBanSms, sendAdminDepositNotification } = require('../services/smsService.js');
+const { sendSms, sendActivationSms, sendWithdrawalSms, sendBetWonSms, sendBanSms, sendDepositSms, sendAdminDepositNotification } = require('../services/smsService.js');
 
 const router = express.Router();
 
@@ -1020,6 +1021,7 @@ router.get('/games', async (req, res) => {
       let gamesQuery = supabase
         .from('games')
         .select('*')
+        .order('is_admin_added', { ascending: false })
         .order('id', { ascending: true });
       if (requestedStatus) {
         gamesQuery = gamesQuery.eq('status', requestedStatus);
@@ -1213,6 +1215,7 @@ router.post('/games', checkAdmin, async (req, res) => {
       // Keep manually created games visible as upcoming when no kickoff was supplied.
       time: time || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       status: status || 'upcoming',
+      is_admin_added: true,
       // Note: markets field is stored separately in the markets table, not here
     };
     console.log('📊 Game data object:', JSON.stringify(gameData, null, 2));
@@ -4378,12 +4381,124 @@ router.get('/c2b-mismatches', checkAdmin, async (req, res) => {
           method: 'M-Pesa C2B Paybill',
         })),
       ...(legacyResult.data || []),
-    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    ]
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .map(async (item) => {
+        let phoneNumber = normalizePhoneNumber(item.phone_number);
+        if (!phoneNumber) {
+          try {
+            phoneNumber = await getC2bPayerPhone(item.raw_payload, supabase);
+          } catch (phoneLookupError) {
+            console.error(`❌ Could not resolve payer phone for C2B receipt ${item.mpesa_receipt || item.id}:`, phoneLookupError.message);
+          }
+        }
+        return {
+          ...item,
+          payer_phone_unavailable: !phoneNumber,
+          phone_number: phoneNumber,
+        };
+      });
 
-    return res.json({ success: true, mismatches });
+    return res.json({ success: true, mismatches: await Promise.all(mismatches) });
   } catch (error) {
     console.error('❌ C2B mismatch fetch error:', error.message);
     return res.status(500).json({ success: false, error: 'Failed to fetch C2B mismatches' });
+  }
+});
+
+router.get('/c2b-mismatches/search-users', checkAdmin, async (req, res) => {
+  try {
+    const search = String(req.query.q || '').trim();
+    if (search.length < 2 || search.length > 100) {
+      return res.status(400).json({ success: false, error: 'Enter at least 2 characters to search' });
+    }
+
+    const pattern = `%${search}%`;
+    const queries = await Promise.all([
+      supabase.from('users').select('id, username, phone_number, account_balance').ilike('phone_number', pattern).limit(8),
+      supabase.from('users').select('id, username, phone_number, account_balance').ilike('username', pattern).limit(8),
+    ]);
+    const failedQuery = queries.find(({ error }) => error);
+    if (failedQuery) throw failedQuery.error;
+
+    const usersById = new Map();
+    for (const { data } of queries) {
+      for (const user of data || []) usersById.set(user.id, { ...user, name: user.username || user.phone_number || 'BETNEXA user' });
+    }
+
+    const nameQuery = await supabase
+      .from('users')
+      .select('id, username, phone_number, account_balance, name')
+      .ilike('name', pattern)
+      .limit(8);
+    if (!nameQuery.error) {
+      for (const user of nameQuery.data || []) usersById.set(user.id, { ...user, name: user.name || user.username || user.phone_number || 'BETNEXA user' });
+    } else if (nameQuery.error.code !== '42703') {
+      throw nameQuery.error;
+    }
+
+    return res.json({ success: true, users: Array.from(usersById.values()).slice(0, 12) });
+  } catch (error) {
+    console.error('❌ C2B user search failed:', error.message);
+    return res.status(500).json({ success: false, error: 'Failed to search users', details: error.message });
+  }
+});
+
+router.post('/c2b-mismatches/:mismatchId/resolve', checkAdmin, async (req, res) => {
+  try {
+    const { mismatchId } = req.params;
+    const { userId } = req.body || {};
+    if (!isValidUUID(mismatchId) || !isValidUUID(userId)) {
+      return res.status(400).json({ success: false, error: 'A valid payment and user are required' });
+    }
+
+    const { data, error } = await supabase.rpc('resolve_c2b_mismatch', {
+      p_mismatch_id: mismatchId,
+      p_user_id: userId,
+      p_admin_id: isValidUUID(req.user?.id) ? req.user.id : null,
+    });
+    if (error) {
+      const conflict = error.code === '23505' || /already resolved|already credited/i.test(error.message || '');
+      return res.status(conflict ? 409 : 500).json({
+        success: false,
+        error: conflict ? error.message : 'Failed to credit the selected account',
+        details: error.message,
+      });
+    }
+
+    if (data?.already_resolved && data.resolved_user_id !== userId) {
+      return res.status(409).json({ success: false, error: 'This payment has already been credited to another account' });
+    }
+
+    let smsSent = false;
+    if (data?.credited) {
+      try {
+        if (data.phone_number) {
+          await sendDepositSms(data.phone_number, data.amount, data.new_balance);
+          smsSent = true;
+        } else {
+          console.error(`❌ C2B payment ${mismatchId} was credited but selected user has no phone number for deposit SMS`);
+        }
+      } catch (smsError) {
+        console.error(`❌ C2B payment ${mismatchId} was credited but deposit SMS failed:`, smsError.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      alreadyResolved: Boolean(data?.already_resolved),
+      smsSent,
+      user: {
+        id: data?.resolved_user_id || userId,
+        username: data?.username,
+        phone_number: data?.phone_number,
+        account_balance: data?.new_balance,
+      },
+      message: data?.already_resolved ? 'This payment was already resolved' : 'Payment credited successfully',
+    });
+  } catch (error) {
+    console.error('❌ C2B mismatch resolution failed:', error.message);
+    return res.status(500).json({ success: false, error: 'Failed to resolve C2B payment', details: error.message });
   }
 });
 
