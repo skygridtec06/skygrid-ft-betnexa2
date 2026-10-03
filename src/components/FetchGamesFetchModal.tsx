@@ -39,6 +39,7 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
   const [games, setGames] = useState<GamePreview[]>([]);
   const [errorMsg, setErrorMsg] = useState('');
   const [dateRange, setDateRange] = useState(getDefaultDateRange);
+  const [oddsWarnings, setOddsWarnings] = useState<string[]>([]);
 
   const handleFetch = async () => {
     if (dateRange.from > dateRange.to) {
@@ -49,6 +50,7 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
 
     setStep('fetching');
     setErrorMsg('');
+    setOddsWarnings([]);
     try {
       const adminPhone = localStorage.getItem("adminPhone") || localStorage.getItem("userPhone") || "0712345678";
       
@@ -71,6 +73,11 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
       }
 
       setGames(data.games || []);
+      setOddsWarnings(Array.isArray(data.warnings)
+        ? data.warnings.map((warning: { date?: string; error?: string }) =>
+          `${warning.date || 'Unknown date'}: ${warning.error || 'Odds unavailable'}`
+        )
+        : []);
       setStep('preview');
     } catch (error) {
       setErrorMsg(error instanceof Error ? error.message : 'Fetch failed');
@@ -93,6 +100,7 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
     setStep('idle');
     setGames([]);
     setErrorMsg('');
+    setOddsWarnings([]);
     onClose();
   };
 
@@ -164,6 +172,20 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
                   Click Execute below to add these {games.length} games to the site.
                 </p>
               </div>
+
+              {oddsWarnings.length > 0 && (
+                <div role="alert" className="bg-yellow-500/10 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-yellow-700 dark:text-yellow-300">
+                    Some odds could not be loaded. These fixtures are still available and use fallback odds.
+                  </p>
+                  <ul className="mt-2 space-y-1 text-xs text-yellow-700 dark:text-yellow-400">
+                    {oddsWarnings.slice(0, 5).map((warning, index) => (
+                      <li key={`${index}-${warning}`}>{warning}</li>
+                    ))}
+                    {oddsWarnings.length > 5 && <li>And {oddsWarnings.length - 5} more odds warning(s).</li>}
+                  </ul>
+                </div>
+              )}
 
               <div className="max-h-[400px] overflow-y-auto space-y-2">
                 {games.map((game, i) => (
