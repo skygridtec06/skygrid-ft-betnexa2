@@ -24,12 +24,29 @@ interface FetchGamesFetchModalProps {
   onExecute: (games: GamePreview[]) => Promise<void>;
 }
 
+const getDefaultDateRange = () => {
+  const from = new Date();
+  const to = new Date(from);
+  to.setDate(to.getDate() + 7);
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: to.toISOString().slice(0, 10),
+  };
+};
+
 export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesFetchModalProps) => {
   const [step, setStep] = useState<'idle' | 'fetching' | 'preview' | 'executing' | 'complete' | 'error'>('idle');
   const [games, setGames] = useState<GamePreview[]>([]);
   const [errorMsg, setErrorMsg] = useState('');
+  const [dateRange, setDateRange] = useState(getDefaultDateRange);
 
   const handleFetch = async () => {
+    if (dateRange.from > dateRange.to) {
+      setErrorMsg('The end date must not be before the start date.');
+      setStep('error');
+      return;
+    }
+
     setStep('fetching');
     setErrorMsg('');
     try {
@@ -39,7 +56,9 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: adminPhone
+          phone: adminPhone,
+          from: dateRange.from,
+          to: dateRange.to,
         })
       });
 
@@ -94,12 +113,35 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
           {step === 'idle' && (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Click the button below to fetch today's prematch games from API Football with accurate odds
+                Select a date range to fetch prematch games from API Football with accurate odds
                 for all BETNEXA markets (1X2, BTTS, Over/Under, Double Chance, HT/FT, Correct Score).
               </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <label htmlFor="fetch-games-from" className="text-sm font-medium">From</label>
+                  <input
+                    id="fetch-games-from"
+                    type="date"
+                    value={dateRange.from}
+                    onChange={event => setDateRange(range => ({ ...range, from: event.target.value }))}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="fetch-games-to" className="text-sm font-medium">To</label>
+                  <input
+                    id="fetch-games-to"
+                    type="date"
+                    min={dateRange.from}
+                    value={dateRange.to}
+                    onChange={event => setDateRange(range => ({ ...range, to: event.target.value }))}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
               <Button onClick={handleFetch} className="w-full" size="lg">
                 <Download className="w-4 h-4 mr-2" />
-                Fetch Today's Matches (Max 100)
+                Fetch Matches
               </Button>
             </div>
           )}
@@ -107,8 +149,8 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
           {step === 'fetching' && (
             <div className="flex flex-col items-center justify-center py-8 gap-4">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <p>Fetching today's games from API Football...</p>
-              <p className="text-xs text-muted-foreground">Fetching up to 100 matches with market odds</p>
+              <p>Fetching games from {dateRange.from} to {dateRange.to}...</p>
+              <p className="text-xs text-muted-foreground">Loading all available matches in the selected date range</p>
             </div>
           )}
 
@@ -117,9 +159,6 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
               <div className="bg-blue-500/10 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
                 <p className="text-lg font-semibold text-blue-700 dark:text-blue-300">
                   ✅ Fetched {games.length} games
-                </p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {games.length === 100 ? '(Maximum limit reached)' : `(${games.length} of max 100)`}
                 </p>
                 <p className="text-sm text-blue-600 dark:text-blue-400 mt-2">
                   Click Execute below to add these {games.length} games to the site.
@@ -176,10 +215,10 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
                   ℹ️ No games found
                 </p>
                 <p className="text-sm text-yellow-600 dark:text-yellow-400 mt-2">
-                  No prematch games with valid odds were found for today.
+                  No prematch games were found from {dateRange.from} to {dateRange.to}.
                 </p>
                 <p className="text-sm text-muted-foreground mt-2">
-                  Try again tomorrow or check API Football for available matches.
+                  Choose a different date range or check API Football for available matches.
                 </p>
               </div>
               <div className="flex gap-3">
@@ -241,4 +280,3 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
     </Dialog>
   );
 };
-

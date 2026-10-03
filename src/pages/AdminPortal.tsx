@@ -5968,47 +5968,78 @@ const AdminPortal = () => {
           isOpen={showFetchGamesModal}
           onClose={() => setShowFetchGamesModal(false)}
           onExecute={async (games) => {
-            try {
-              const response = await fetch(buildApiUrl('/api/admin/fetch-api-football/execute'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  phone: loggedInUser.phone,
-                  games,
-                  sport: 'football',
-                }),
-              });
-              const data = await response.json().catch(() => ({}));
-              if (!response.ok || !data.success) {
-                const failedDetails = Array.isArray(data.failed_games)
-                  ? data.failed_games.map((result: { game_id?: string; error?: string }) =>
-                    `${result.game_id || 'unknown'}: ${result.error || 'unknown error'}`
-                  ).join('; ')
-                  : '';
-                throw new Error(
-                  [data.error, data.details, failedDetails].filter(Boolean).join(' — ')
-                  || `Request failed with HTTP ${response.status}`
-                );
+            const batchSize = 50;
+            let addedCount = 0;
+            let skippedCount = 0;
+            let failedCount = 0;
+            const failures: string[] = [];
+
+            for (let offset = 0; offset < games.length; offset += batchSize) {
+              const batch = games.slice(offset, offset + batchSize);
+              let response: Response;
+              let data: {
+                success?: boolean;
+                error?: string;
+                games_added?: number;
+                games_skipped?: number;
+                games_failed?: number;
+                results?: { added?: Array<{ status?: string }> };
+                failed_games?: Array<{ game_id?: string; error?: string }>;
+              };
+              try {
+                response = await fetch(buildApiUrl('/api/admin/fetch-api-football/execute'), {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    phone: loggedInUser.phone,
+                    games: batch,
+                    sport: 'football',
+                  }),
+                });
+                data = await response.json().catch(() => ({}));
+              } catch (error) {
+                failedCount += batch.length;
+                const message = error instanceof Error ? error.message : String(error);
+                failures.push(`Batch ${Math.floor(offset / batchSize) + 1}: ${message}`);
+                continue;
               }
 
-              const addedCount = Number(data.games_added) || 0;
-              const failedCount = Number(data.games_failed) || 0;
-              const skippedCount = Array.isArray(data.results?.added)
-                ? data.results.added.filter((result: { status?: string }) => result.status === 'already_exists').length
-                : 0;
-              const parts = [`✅ Added ${addedCount} games`];
-              if (skippedCount > 0) parts.push(`${skippedCount} duplicates skipped`);
-              if (failedCount > 0) parts.push(`${failedCount} failed`);
-              alert(parts.join(', ') + '!');
-              setShowFetchGamesModal(false);
-              
-              // Refresh games to sync with all users
-              await refreshGames();
-            } catch (error) {
-              console.error('Error executing games:', error);
-              const message = error instanceof Error ? error.message : String(error);
-              alert(`Failed to add games: ${message}`);
+              if (!response.ok) {
+                failedCount += batch.length;
+                failures.push(
+                  `Batch ${Math.floor(offset / batchSize) + 1}: ${data.error || `HTTP ${response.status}`}`
+                );
+                continue;
+              }
+
+              addedCount += Number(data.games_added) || 0;
+              skippedCount += Number(data.games_skipped) || (Array.isArray(data.results?.added)
+                ? data.results.added.filter(result => result.status === 'already_exists').length
+                : 0);
+              const failedGames = Array.isArray(data.failed_games) ? data.failed_games : [];
+              const batchFailedCount = Number(data.games_failed) || failedGames.length;
+              failedCount += batchFailedCount;
+              failures.push(...failedGames.slice(0, 5).map(
+                result =>
+                  `${result.game_id || 'unknown'}: ${result.error || 'unknown error'}`
+              ));
+
+              if (!data.success && batchFailedCount === 0 && !data.games_added && !data.games_skipped) {
+                failedCount += batch.length;
+                failures.push(`Batch ${Math.floor(offset / batchSize) + 1}: ${data.error || 'Request failed'}`);
+              }
             }
+
+            const parts = [`✅ Added ${addedCount} games`];
+            if (skippedCount > 0) parts.push(`${skippedCount} duplicates skipped`);
+            if (failedCount > 0) parts.push(`${failedCount} failed`);
+            const failureSummary = failures.length > 0
+              ? `\n\nFailures:\n${failures.slice(0, 10).join('\n')}`
+              : '';
+            alert(parts.join(', ') + '!' + failureSummary);
+            setShowFetchGamesModal(false);
+
+            await refreshGames();
           }}
         />
 
