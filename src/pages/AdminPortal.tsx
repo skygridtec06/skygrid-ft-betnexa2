@@ -2532,6 +2532,12 @@ const AdminPortal = () => {
     }
   };
 
+  useEffect(() => {
+    loadAdminTabDataRef.current("users");
+    loadAdminTabDataRef.current("bets");
+    loadAdminTabDataRef.current("c2b");
+  }, [loggedInUser?.phone]);
+
   const fetchAllBetsRef = useRef(fetchAllBets);
   fetchAllBetsRef.current = fetchAllBets;
 
@@ -2618,7 +2624,7 @@ const AdminPortal = () => {
     { icon: UserPlus, label: "Signed Up Today", value: todaySignups.toLocaleString(), color: "text-primary" },
     { icon: BarChart3, label: "Active Bets", value: activeBets.toLocaleString(), color: "text-primary" },
     { icon: Trophy, label: "Upcoming Games", value: homepageUpcomingGames.length.toString(), color: "text-gold" },
-    { icon: AlertCircle, label: "C2B", value: c2bMismatches.length.toString(), color: "text-yellow-500", note: "Unmatched payments" },
+    { icon: AlertCircle, label: "C2B", value: c2bMismatches.filter((mismatch) => !mismatch.resolved_at).length.toString(), color: "text-yellow-500", note: "Unmatched payments" },
   ];
 
   const stopDarajaTestPolling = () => {

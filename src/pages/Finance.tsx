@@ -89,7 +89,6 @@ export default function Finance() {
   const [processingCountdown, setProcessingCountdown] = useState(20);
   const [activationPhoneNumber, setActivationPhoneNumber] = useState("");
   const [isActivating, setIsActivating] = useState(false);
-  const [pendingWithdrawalAmount, setPendingWithdrawalAmount] = useState<number | null>(null);
   const [secondsUntilProceed, setSecondsUntilProceed] = useState(20);
   const { deposit, withdraw, balance, stakeableBalance, withdrawableBalance, setBalance, setStakeableBalance, setWithdrawableBalance } = useBets();
   const { user, updateUser, refreshUserData } = useUser();
@@ -284,12 +283,12 @@ export default function Finance() {
           const st = statusData.status;
 
           if (st === 'success') {
+            const newBalance = Number(statusData.funding?.newBalance);
+            if (!Number.isFinite(newBalance)) {
+              throw new Error("Activation succeeded, but the updated balance was not returned.");
+            }
             clearInterval(interval);
             setStatusCheckInterval(null);
-
-            const newBalance = (statusData.funding?.newBalance !== undefined)
-              ? Number(statusData.funding.newBalance)
-              : balance + TEST_ACTIVATION_FEE;
 
             updateUser({
               withdrawalActivated: true,
@@ -302,34 +301,14 @@ export default function Finance() {
             await refreshUserData();
 
             setPaymentStatus("success");
-            setStatusMessage(`✅ Account activated! KSH ${TEST_ACTIVATION_FEE} added to your balance. New balance: KSH ${newBalance.toLocaleString()}`);
             setIsActivating(false);
             setActivationPhoneNumber("");
-
-            if (pendingWithdrawalAmount !== null) {
-              const savedWithdrawalAmount = pendingWithdrawalAmount;
-              setPendingWithdrawalAmount(null);
-
-              // Wait for activation message to display, then process the withdrawal
-              setTimeout(async () => {
-                setStatusMessage("🔄 Processing your withdrawal...");
-                setPaymentStatus("initiating");
-                await processPendingWithdrawal(savedWithdrawalAmount);
-
-                // Keep modal open until withdrawal status is visible
-                setTimeout(() => {
-                  setShowProcessingModal(false);
-                  setStatusMessage("");
-                  setPaymentStatus(null);
-                }, 3500);
-              }, 2000);
-            } else {
-              setTimeout(() => {
-                setShowProcessingModal(false);
-                setStatusMessage("");
-                setPaymentStatus(null);
-              }, 4000);
-            }
+            setStatusMessage(`✅ Account activated! KSH ${TEST_ACTIVATION_FEE} added to your balance. New balance: KSH ${newBalance.toLocaleString()}. Submit a separate withdrawal request when ready.`);
+            setTimeout(() => {
+              setShowProcessingModal(false);
+              setStatusMessage("");
+              setPaymentStatus(null);
+            }, 4000);
           } else if (st === 'cancelled') {
             clearInterval(interval);
             setStatusCheckInterval(null);
@@ -365,7 +344,18 @@ export default function Finance() {
           const latestProfile = await fetchLatestProfileState();
 
           if (latestProfile?.withdrawalActivated) {
-            const newBalance = Number(latestProfile.accountBalance || balance);
+            const newBalance = Number(latestProfile.accountBalance);
+            if (!Number.isFinite(newBalance)) {
+              setPaymentStatus("failed");
+              setStatusMessage("❌ Account activation was confirmed, but the updated balance could not be verified. Please refresh your balance.");
+              setIsActivating(false);
+              setTimeout(() => {
+                setShowProcessingModal(false);
+                setStatusMessage("");
+                setPaymentStatus(null);
+              }, 4000);
+              return;
+            }
 
             updateUser({
               withdrawalActivated: true,
@@ -378,32 +368,14 @@ export default function Finance() {
           }
 
             setPaymentStatus("success");
-            setStatusMessage(`✅ Account activated! KSH ${TEST_ACTIVATION_FEE} added to your balance. New balance: KSH ${newBalance.toLocaleString()}`);
+            setStatusMessage(`✅ Account activated! KSH ${TEST_ACTIVATION_FEE} added to your balance. New balance: KSH ${newBalance.toLocaleString()}. Submit a separate withdrawal request when ready.`);
             setIsActivating(false);
             setActivationPhoneNumber("");
-
-            if (pendingWithdrawalAmount !== null) {
-              const savedWithdrawalAmount = pendingWithdrawalAmount;
-              setPendingWithdrawalAmount(null);
-
-              setTimeout(async () => {
-                setStatusMessage("🔄 Processing your withdrawal...");
-                setPaymentStatus("initiating");
-                await processPendingWithdrawal(savedWithdrawalAmount);
-
-                setTimeout(() => {
-                  setShowProcessingModal(false);
-                  setStatusMessage("");
-                  setPaymentStatus(null);
-                }, 3500);
-              }, 2000);
-            } else {
-              setTimeout(() => {
-                setShowProcessingModal(false);
-                setStatusMessage("");
-                setPaymentStatus(null);
-              }, 4000);
-            }
+            setTimeout(() => {
+              setShowProcessingModal(false);
+              setStatusMessage("");
+              setPaymentStatus(null);
+            }, 4000);
           } else {
             setPaymentStatus("failed");
             setStatusMessage("❌ Activation timed out. Please try again.");
@@ -428,52 +400,6 @@ export default function Finance() {
         setShowProcessingModal(false);
         setShowActivationModal(true);
       }, 2500);
-    }
-  };
-
-  const processPendingWithdrawal = async (withdrawalAmount: number) => {
-    if (withdrawalInProgress.current) return;
-    if (!user?.id) {
-      setStatusMessage("❌ Unable to identify the current user. Please refresh and try again.");
-      setPaymentStatus("failed");
-      withdrawalInProgress.current = false;
-      return;
-    }
-    withdrawalInProgress.current = true;
-    const withdrawalKey = `WTH-${Date.now()}-${user.id}`;
-    try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'https://www.betnexabackend.co.ke';
-      const response = await fetch(`${apiUrl}/api/admin/transactions/withdrawal`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: user.id,
-          amount: withdrawalAmount,
-          phoneNumber: user?.phone || "",
-          reason: "User initiated withdrawal",
-          idempotencyKey: withdrawalKey
-        })
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "Withdrawal failed");
-      }
-
-      // Refresh transactions and balance from DB
-      if (user?.id) {
-        await fetchTransactions(user.id);
-      }
-      setBalance((prev) => prev - withdrawalAmount);
-      updateUser({ accountBalance: balance - withdrawalAmount });
-
-      setAmount("");
-      setStatusMessage(`✅ Withdrawal of KSH ${withdrawalAmount.toLocaleString()} submitted successfully`);
-      setPaymentStatus("success");
-    } catch (error) {
-      setStatusMessage(`❌ Withdrawal failed: ${error instanceof Error ? error.message : error}`);
-      setPaymentStatus("failed");
-    } finally {
-      withdrawalInProgress.current = false;
     }
   };
 
@@ -643,7 +569,6 @@ export default function Finance() {
 
       // Check if withdrawal needs activation
       if (balance >= 600 && !user?.withdrawalActivated) {
-        setPendingWithdrawalAmount(transactionAmount);
         setShowActivationModal(true);
         setIsProcessing(false);
         return;
@@ -1105,18 +1030,6 @@ export default function Finance() {
               </ul>
             </div>
 
-            {/* Withdrawal Amount Info */}
-            {pendingWithdrawalAmount && (
-              <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
-                <p className="text-sm text-muted-foreground">
-                  After activation, you'll withdraw:
-                </p>
-                <p className="text-xl font-bold text-primary mt-1">
-                  KSH {pendingWithdrawalAmount.toLocaleString()}
-                </p>
-              </div>
-            )}
-
             {/* Phone Number Input */}
             <div>
               <label className="text-sm font-medium text-foreground">
@@ -1142,7 +1055,6 @@ export default function Finance() {
               onClick={() => {
                 setShowActivationModal(false);
                 setActivationPhoneNumber("");
-                setPendingWithdrawalAmount(null);
               }}
               disabled={isActivating}
             >
