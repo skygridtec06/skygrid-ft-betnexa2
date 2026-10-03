@@ -7,11 +7,6 @@
       "use": "@vercel/node"
     }
   ],
-  "functions": {
-    "server.js": {
-      "maxDuration": 300
-    }
-  },
   "routes": [
     {
       "src": "/(.*)",
