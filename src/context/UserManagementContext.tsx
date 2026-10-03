@@ -27,7 +27,7 @@ interface UserManagementContextType {
   addUser: (user: User) => void;
   getAllUsers: () => User[];
   setAllUsers: (users: User[]) => void;
-  fetchUsersFromBackend: (phone?: string) => Promise<void>;
+  fetchUsersFromBackend: (phone?: string) => Promise<boolean>;
 }
 
 const UserManagementContext = createContext<UserManagementContextType | undefined>(undefined);
@@ -64,8 +64,13 @@ export function UserManagementProvider({ children }: { children: ReactNode }) {
       const queryParam = phone ? `?phone=${encodeURIComponent(phone)}` : '';
       const response = await fetch(`${apiUrl}/api/admin/users${queryParam}`, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
       });
+
+      if (!response.ok) {
+        throw new Error(`Users request failed with HTTP ${response.status}`);
+      }
 
       const data = await response.json();
 
@@ -100,13 +105,16 @@ export function UserManagementProvider({ children }: { children: ReactNode }) {
 
         console.log(`✅ Mapped ${mappedUsers.length} users successfully`);
         setAllUsers(mappedUsers);
+        return true;
       } else {
         console.warn('⚠️  No users data in response or response not successful');
         console.log('Response data:', data);
         console.warn('❌ Failed to fetch users - ensure admin phone is passed');
+        return false;
       }
     } catch (error) {
       console.error('❌ Error fetching users from backend:', error);
+      return false;
     }
   };
 
@@ -126,7 +134,6 @@ export function useUserManagement() {
   }
   return context;
 }
-
 
 
 

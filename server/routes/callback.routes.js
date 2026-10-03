@@ -188,7 +188,9 @@ router.post('/c2b-validation', async (req, res) => {
 
     // Do not reject an otherwise valid payment because the account cannot be
     // matched. Confirmation must arrive so the payment can be stored for review.
-    const user = await findUserByBetnexaId(accountNumber) || await findUserByPhoneNumber(MSISDN);
+    const user = accountNumber
+      ? await findUserByBetnexaId(accountNumber)
+      : await findUserByPhoneNumber(MSISDN);
     if (!user) {
       console.warn(`⚠️ [C2B VALIDATION] Unmatched account "${accountNumber}" or phone "${MSISDN}". Accepting for manual review.`);
     } else {
@@ -265,33 +267,42 @@ router.post('/c2b-confirmation', async (req, res) => {
       return res.json({ ResultCode: '0', ResultDesc: 'Accepted' });
     }
 
-    // BETNEXA ID remains the primary match; phone is a recovery fallback.
-    const user = await findUserByBetnexaId(accountNumber) || await findUserByPhoneNumber(phoneNumber);
+    // A supplied account reference must match exactly; only fall back to phone
+    // lookup when Safaricom did not provide an account reference.
+    const user = accountNumber
+      ? await findUserByBetnexaId(accountNumber)
+      : await findUserByPhoneNumber(phoneNumber);
 
     if (!user) {
       console.error(`❌ [C2B CONFIRMATION] No account matched BETNEXA ID "${accountNumber}" or phone "${phoneNumber}". Cannot credit.`);
-      // Still log the unmatched payment for admin review
+      // Keep unmatched receipts separate because transactions require a user_id.
       try {
-        const { error: mismatchInsertError } = await supabase.from('transactions').insert({
+        const mismatch = {
           transaction_id: `C2B-UNMATCHED-${mpesaReceipt}`,
-          user_id: null,
-          type: 'deposit',
+          mpesa_receipt: mpesaReceipt || null,
+          account_reference: accountNumber || null,
+          phone_number: phoneNumber || null,
           amount,
-          status: 'failed',
-          method: 'M-Pesa C2B Paybill',
-          phone_number: phoneNumber,
-          mpesa_receipt: mpesaReceipt,
-          description: `UNMATCHED C2B deposit - Account: ${accountNumber}, Payer: ${payerName}`,
-          admin_notes: `No user found for BETNEXA ID "${accountNumber}". Manual resolution needed.`,
+          payer_name: payerName || null,
+          transaction_type: TransactionType || null,
+          business_short_code: BusinessShortCode || null,
+          transaction_time: TransTime || null,
+          raw_payload: payload,
           created_at: new Date().toISOString(),
-        });
+        };
+        const { error: mismatchInsertError } = await supabase
+          .from('c2b_mismatches')
+          .upsert(mismatch, { onConflict: 'transaction_id' });
+
         if (mismatchInsertError) {
           console.error('❌ Failed to persist unmatched C2B payment:', mismatchInsertError.message);
+          return res.status(500).json({ ResultCode: '1', ResultDesc: 'Unable to record unmatched payment' });
         } else {
           console.log(`✅ [C2B] Unmatched payment stored for admin review: ${mpesaReceipt}`);
         }
       } catch (logErr) {
         console.error('❌ Failed to log unmatched C2B transaction:', logErr.message);
+        return res.status(500).json({ ResultCode: '1', ResultDesc: 'Unable to record unmatched payment' });
       }
       return res.json({ ResultCode: '0', ResultDesc: 'Accepted' });
     }

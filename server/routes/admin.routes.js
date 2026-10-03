@@ -2007,6 +2007,13 @@ router.put('/games/:gameId/score', checkAdmin, async (req, res) => {
   try {
     const { gameId } = req.params;
     const { homeScore, awayScore, minute, status } = req.body;
+    const parsedHomeScore = Number(homeScore);
+    const parsedAwayScore = Number(awayScore);
+
+    if (!Number.isInteger(parsedHomeScore) || parsedHomeScore < 0 ||
+        !Number.isInteger(parsedAwayScore) || parsedAwayScore < 0) {
+      return res.status(400).json({ error: 'Scores must be non-negative whole numbers' });
+    }
 
     if (isApiManagedGameId(gameId)) {
       return res.status(403).json({ error: 'API-managed matches cannot have scores edited by admin' });
@@ -2039,6 +2046,9 @@ router.put('/games/:gameId/score', checkAdmin, async (req, res) => {
 
     console.log(`   Found game with id: ${existingGame.id}`);
 
+    const correctsFinishedScore = existingGame.status === 'finished' &&
+      (Number(existingGame.home_score) !== parsedHomeScore || Number(existingGame.away_score) !== parsedAwayScore);
+
     let resolvedMinute = parseInt(minute, 10);
     if (!Number.isFinite(resolvedMinute) || resolvedMinute < 0) {
       resolvedMinute = parseInt(existingGame.minute, 10) || 0;
@@ -2047,10 +2057,10 @@ router.put('/games/:gameId/score', checkAdmin, async (req, res) => {
     }
 
     const updates = {
-      home_score: homeScore,
-      away_score: awayScore,
+      home_score: parsedHomeScore,
+      away_score: parsedAwayScore,
       minute: resolvedMinute,
-      status: status,
+      status: status || existingGame.status,
       updated_at: new Date().toISOString(),
     };
 
@@ -2072,7 +2082,11 @@ router.put('/games/:gameId/score', checkAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Game not found' });
     }
 
-    console.log(`✅ Game score updated: ${homeScore}-${awayScore}`);
+    console.log(`✅ Game score updated: ${parsedHomeScore}-${parsedAwayScore}`);
+
+    if (correctsFinishedScore) {
+      await unsettleBetsForGame(existingGame.id);
+    }
 
     // Log admin action (optional)
     try {
@@ -4332,22 +4346,41 @@ router.get('/payments', checkAdmin, async (req, res) => {
 // GET: Fetch C2B payments that could not be matched to a BETNEXA ID or phone
 router.get('/c2b-mismatches', checkAdmin, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('type', 'deposit')
-      .eq('status', 'failed')
-      .is('user_id', null)
-      .eq('method', 'M-Pesa C2B Paybill')
-      .ilike('description', 'UNMATCHED C2B%')
-      .order('created_at', { ascending: false });
+    const [mismatchResult, legacyResult] = await Promise.all([
+      supabase
+        .from('c2b_mismatches')
+        .select('*')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('transactions')
+        .select('*')
+        .eq('type', 'deposit')
+        .eq('status', 'failed')
+        .is('user_id', null)
+        .eq('method', 'M-Pesa C2B Paybill')
+        .ilike('description', 'UNMATCHED C2B%')
+        .order('created_at', { ascending: false }),
+    ]);
 
-    if (error) {
+    if (mismatchResult.error || legacyResult.error) {
+      const error = mismatchResult.error || legacyResult.error;
       console.error('❌ Failed to fetch C2B mismatches:', error.message);
-      return res.status(500).json({ success: false, error: 'Failed to fetch C2B mismatches' });
+      return res.status(500).json({ success: false, error: 'Failed to fetch C2B mismatches', details: error.message });
     }
 
-    return res.json({ success: true, mismatches: data || [] });
+    const legacyByReceipt = new Set((legacyResult.data || []).map((item) => item.mpesa_receipt).filter(Boolean));
+    const mismatches = [
+      ...(mismatchResult.data || [])
+        .filter((item) => !legacyByReceipt.has(item.mpesa_receipt))
+        .map((item) => ({
+          ...item,
+          description: `Unmatched Paybill account: ${item.account_reference || 'Not provided'}${item.payer_name ? ` · Payer: ${item.payer_name}` : ''}`,
+          method: 'M-Pesa C2B Paybill',
+        })),
+      ...(legacyResult.data || []),
+    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    return res.json({ success: true, mismatches });
   } catch (error) {
     console.error('❌ C2B mismatch fetch error:', error.message);
     return res.status(500).json({ success: false, error: 'Failed to fetch C2B mismatches' });

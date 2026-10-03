@@ -106,11 +106,16 @@ const AdminPortal = () => {
   const [showBetDetailsDialog, setShowBetDetailsDialog] = useState(false);
   const [selectedBetDetails, setSelectedBetDetails] = useState<PlacedBet | null>(null);
   const [adminTab, setAdminTab] = useState("games");
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [usersLoadError, setUsersLoadError] = useState("");
+  const [userPage, setUserPage] = useState(0);
   const [showPinDialog, setShowPinDialog] = useState(false);
   const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState("");
   const [pendingTab, setPendingTab] = useState("");
   const [unlockedTabs, setUnlockedTabs] = useState<Set<string>>(new Set());
+  const loadAdminTabDataRef = useRef<(tab: string) => void>(() => {});
+  const loadedAdminTabsRef = useRef(new Set<string>());
 
   const PIN_PROTECTED_TABS = ["earnings", "transactions", "c2b"];
   const ADMIN_PIN_HASH = "140702";
@@ -123,6 +128,7 @@ const AdminPortal = () => {
       setShowPinDialog(true);
     } else {
       setAdminTab(tab);
+      loadAdminTabDataRef.current(tab);
     }
   };
 
@@ -130,6 +136,7 @@ const AdminPortal = () => {
     if (pinInput === ADMIN_PIN_HASH) {
       setUnlockedTabs(prev => new Set([...prev, pendingTab]));
       setAdminTab(pendingTab);
+      loadAdminTabDataRef.current(pendingTab);
       setShowPinDialog(false);
       setPinInput("");
       setPinError("");
@@ -384,6 +391,8 @@ const AdminPortal = () => {
   const [allTransactions, setAllTransactions] = useState<any[]>([]);
   const [allPayments, setAllPayments] = useState<any[]>([]);
   const [c2bMismatches, setC2bMismatches] = useState<any[]>([]);
+  const [loadingC2bMismatches, setLoadingC2bMismatches] = useState(false);
+  const [c2bMismatchesError, setC2bMismatchesError] = useState("");
   const [activationFees, setActivationFees] = useState<any[]>([]);
   
   // User balance editing state
@@ -471,29 +480,6 @@ const AdminPortal = () => {
   // Timer polling is now handled by OddsContext - no need to duplicate here
   // The games state from OddsContext is already updated every second for live games
 
-  // Fetch users from backend when component mounts
-  useEffect(() => {
-    console.log('📦 Fetching users from backend...');
-    fetchUsersFromBackend(loggedInUser?.phone);
-    
-    // Also fetch transactions, payments, and bets
-    console.log('📦 Fetching transactions and payments...');
-    fetchAllTransactions();
-    fetchAllPayments();
-    fetchC2bMismatches();
-    
-    console.log('📦 Fetching all bets...');
-    fetchAllBets();
-  }, [loggedInUser?.phone]);
-
-  useEffect(() => {
-    const refreshInterval = window.setInterval(() => {
-      fetchAllBets();
-    }, 10000);
-
-    return () => window.clearInterval(refreshInterval);
-  }, [fetchAllBets]);
-
   // Fetch transactions for a specific user
   const fetchUserTransactions = async (userId: string, user?: any) => {
     try {
@@ -554,6 +540,9 @@ const AdminPortal = () => {
       user.betnexaId?.toLowerCase().includes(query)
     );
   });
+  const usersPageSize = 50;
+  const usersPageCount = Math.ceil(filteredUsers.length / usersPageSize);
+  const paginatedUsers = filteredUsers.slice(userPage * usersPageSize, (userPage + 1) * usersPageSize);
 
   const previewBroadcastRecipients = users.filter((user) => {
     if (!user.phone) return false;
@@ -1792,6 +1781,52 @@ const AdminPortal = () => {
     }
   };
 
+  const updateFinishedGameScore = async (gameId: string) => {
+    if (!ensureManualGame(gameId)) return;
+    const game = games.find((item) => item.id === gameId);
+    if (!game || game.status !== "finished") return;
+
+    const score = scoreUpdate[gameId] || {
+      home: game.homeScore ?? 0,
+      away: game.awayScore ?? 0,
+    };
+    if (!Number.isInteger(score.home) || score.home < 0 || !Number.isInteger(score.away) || score.away < 0) {
+      alert("Scores must be non-negative whole numbers.");
+      return;
+    }
+
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'https://www.betnexabackend.co.ke';
+      const response = await fetch(`${apiUrl}/api/admin/games/${gameId}/score`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: loggedInUser.phone,
+          homeScore: score.home,
+          awayScore: score.away,
+          minute: game.minute ?? 90,
+          status: "finished",
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.details || data.error || "Failed to update full-time score");
+      }
+
+      updateGame(gameId, {
+        homeScore: score.home,
+        awayScore: score.away,
+        status: "finished",
+      });
+      await refreshGames();
+      alert("Full-time score updated. Settled bets have been recalculated.");
+    } catch (error) {
+      console.error("Error updating full-time score:", error);
+      alert(`Failed to update full-time score: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+  };
+
   const endGame = async (gameId: string) => {
     if (!ensureManualGame(gameId)) return;
     const game = games.find((g) => g.id === gameId);
@@ -2333,18 +2368,76 @@ const AdminPortal = () => {
   };
 
   const fetchC2bMismatches = async () => {
+    setLoadingC2bMismatches(true);
+    setC2bMismatchesError("");
     try {
       const apiUrl = import.meta.env.VITE_API_URL || 'https://www.betnexabackend.co.ke';
       const phone = loggedInUser?.phone || '';
       const response = await fetch(`${apiUrl}/api/admin/c2b-mismatches?phone=${encodeURIComponent(phone)}`);
       const data = await response.json();
-      if (data.success) {
-        setC2bMismatches(data.mismatches || []);
+      if (!response.ok || !data.success || !Array.isArray(data.mismatches)) {
+        throw new Error(data.details || data.error || 'Failed to load C2B mismatches');
       }
+      setC2bMismatches(data.mismatches);
     } catch (error) {
       console.error("Failed to fetch C2B mismatches:", error);
+      setC2bMismatchesError(error instanceof Error ? error.message : 'Failed to load C2B mismatches');
+    } finally {
+      setLoadingC2bMismatches(false);
     }
   };
+
+  const refreshUsers = async () => {
+    setLoadingUsers(true);
+    setUsersLoadError("");
+    try {
+      const refreshed = await fetchUsersFromBackend(loggedInUser?.phone);
+      if (!refreshed) throw new Error("The server did not return a valid users list.");
+      loadedAdminTabsRef.current.add("users");
+      setUserPage(0);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to refresh users.";
+      setUsersLoadError(message);
+      console.error("Failed to refresh users:", error);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  loadAdminTabDataRef.current = (tab) => {
+    if ((tab === "users" || tab === "broadcast") && !loadedAdminTabsRef.current.has("users")) {
+      void refreshUsers();
+    }
+
+    if (tab === "transactions" && !loadedAdminTabsRef.current.has(tab)) {
+      loadedAdminTabsRef.current.add(tab);
+      void fetchAllTransactions();
+      void fetchAllPayments();
+    }
+
+    if (tab === "c2b" && !loadedAdminTabsRef.current.has(tab)) {
+      loadedAdminTabsRef.current.add(tab);
+      void fetchC2bMismatches();
+    }
+
+    if (tab === "bets" && !loadedAdminTabsRef.current.has(tab)) {
+      loadedAdminTabsRef.current.add(tab);
+      void fetchAllBets();
+    }
+  };
+
+  const fetchAllBetsRef = useRef(fetchAllBets);
+  fetchAllBetsRef.current = fetchAllBets;
+
+  useEffect(() => {
+    if (adminTab !== "bets") return;
+
+    const refreshInterval = window.setInterval(() => {
+      void fetchAllBetsRef.current();
+    }, 10000);
+
+    return () => window.clearInterval(refreshInterval);
+  }, [adminTab]);
 
   // Resolve a failed payment
   const resolveFailedPayment = async (externalReference: string) => {
@@ -2553,6 +2646,125 @@ const AdminPortal = () => {
   };
 
   const inputClass = "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary";
+
+  const renderFinishedGameEditor = (game: GameOdds) => {
+    if (editingGameDetails !== game.id) return null;
+
+    const details = gameDetailsEdit[game.id];
+    if (!details) return null;
+
+    return (
+      <div className="mt-3 space-y-3 rounded-lg border border-border/50 bg-background/50 p-3">
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs text-muted-foreground">League</label>
+            <Input
+              value={details.league || ""}
+              onChange={(e) => setGameDetailsEdit((prev) => ({ ...prev, [game.id]: { ...prev[game.id], league: e.target.value } }))}
+              className="h-8 text-xs"
+              placeholder="League"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Kickoff Time</label>
+            <Input
+              type="datetime-local"
+              value={details.kickoffTime ? new Date(details.kickoffTime).toISOString().slice(0, 16) : ""}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                const kickoffTime = new Date(`${e.target.value}:00`).toISOString();
+                setGameDetailsEdit((prev) => ({ ...prev, [game.id]: { ...prev[game.id], kickoffTime } }));
+              }}
+              className="h-8 text-xs"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs text-muted-foreground">Home Team</label>
+            <Input
+              value={details.homeTeam || ""}
+              onChange={(e) => setGameDetailsEdit((prev) => ({ ...prev, [game.id]: { ...prev[game.id], homeTeam: e.target.value } }))}
+              className="h-8 text-xs"
+              placeholder="Home Team"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Away Team</label>
+            <Input
+              value={details.awayTeam || ""}
+              onChange={(e) => setGameDetailsEdit((prev) => ({ ...prev, [game.id]: { ...prev[game.id], awayTeam: e.target.value } }))}
+              className="h-8 text-xs"
+              placeholder="Away Team"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {([
+            ["homeOdds", "Home Odds (1)"],
+            ["drawOdds", "Draw (X)"],
+            ["awayOdds", "Away Odds (2)"],
+          ] as const).map(([key, label]) => (
+            <div key={key}>
+              <label className="text-xs text-muted-foreground">{label}</label>
+              <Input
+                type="number"
+                min="1"
+                step="0.01"
+                value={details[key] || ""}
+                onChange={(e) => setGameDetailsEdit((prev) => ({ ...prev, [game.id]: { ...prev[game.id], [key]: e.target.value } }))}
+                className="h-8 text-xs"
+              />
+            </div>
+          ))}
+        </div>
+        <div className="border-t border-border/30 pt-3">
+          <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Market Odds</p>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-6">
+            {(Object.keys(marketLabels) as (keyof typeof marketLabels)[]).map((key) => {
+              const currentDbValue = game.markets?.[key];
+              const editValue = details.markets?.[key];
+
+              return (
+                <div key={key}>
+                  <label className="mb-0.5 block text-[10px] text-muted-foreground">
+                    {marketLabels[key]}
+                    {currentDbValue != null && <span className="font-semibold text-primary"> ({currentDbValue.toFixed(2)})</span>}
+                  </label>
+                  <Input
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    value={editValue ?? ""}
+                    placeholder={currentDbValue?.toFixed(2) || "1.50"}
+                    onChange={(e) => {
+                      const value = e.target.value === "" ? undefined : Number(e.target.value);
+                      setGameDetailsEdit((prev) => ({
+                        ...prev,
+                        [game.id]: {
+                          ...prev[game.id],
+                          markets: { ...prev[game.id]?.markets, [key]: value },
+                        },
+                      }));
+                    }}
+                    className="h-8 text-xs"
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="hero" onClick={() => updateGameDetails(game.id)} className="flex-1 text-xs">
+            <Save className="mr-1 h-3 w-3" /> Save
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setEditingGameDetails(null)} className="flex-1 text-xs">
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -3085,33 +3297,19 @@ const AdminPortal = () => {
                                       <span>📅 {game.time}</span>
                                     </div>
                                   </div>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => {
-                                      setEditingGameDetails(editingGameDetails === game.id ? null : game.id);
-                                      if (editingGameDetails !== game.id) {
-                                        let kickoffTimeStr = game.time || new Date().toISOString();
-                                        try {
-                                          const parsedDate = new Date(kickoffTimeStr);
-                                          if (isNaN(parsedDate.getTime())) {
-                                            kickoffTimeStr = new Date().toISOString();
-                                          }
-                                        } catch (e) {
-                                          kickoffTimeStr = new Date().toISOString();
+                                  <div className="flex shrink-0 items-center gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => {
+                                        if (editingGameDetails === game.id) {
+                                          setEditingGameDetails(null);
+                                          return;
                                         }
 
-                                        const dbMarkets = game.markets || {};
-                                        const editableMarkets: Record<string, number> = { ...dbMarkets };
-                                        for (const k of Object.keys(marketLabels)) {
-                                          if (editableMarkets[k] === undefined || editableMarkets[k] === null) {
-                                          } else {
-                                            editableMarkets[k] = editableMarkets[k];
-                                          }
-                                        }
-
-                                        setGameDetailsEdit({
-                                          ...gameDetailsEdit,
+                                        const kickoffTime = new Date(game.time || Date.now());
+                                        setGameDetailsEdit((prev) => ({
+                                          ...prev,
                                           [game.id]: {
                                             league: game.league,
                                             homeTeam: game.homeTeam,
@@ -3119,16 +3317,74 @@ const AdminPortal = () => {
                                             homeOdds: game.homeOdds.toString(),
                                             drawOdds: game.drawOdds.toString(),
                                             awayOdds: game.awayOdds.toString(),
-                                            kickoffTime: kickoffTimeStr,
-                                            markets: editableMarkets
-                                          }
-                                        });
-                                      }
-                                    }}
+                                            kickoffTime: Number.isNaN(kickoffTime.getTime()) ? new Date().toISOString() : kickoffTime.toISOString(),
+                                            markets: { ...game.markets },
+                                          },
+                                        }));
+                                        setEditingGameDetails(game.id);
+                                      }}
+                                      className="text-xs"
+                                    >
+                                      <Edit2 className="mr-1 h-3 w-3" />
+                                      {editingGameDetails === game.id ? "Close Edit" : "Edit Details"}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={isApiManagedGame(game.id)}
+                                      onClick={() => revertGame(game.id)}
+                                      className="text-xs"
+                                      title="Revert finished game to live and unsettle settled bets"
+                                    >
+                                      <RefreshCw className="mr-1 h-3 w-3" /> Revert to Live
+                                    </Button>
+                                  </div>
+                                </div>
+                                {renderFinishedGameEditor(game)}
+                                <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-border/30 pt-3">
+                                  <div>
+                                    <label className="text-xs text-muted-foreground">Full-time home score</label>
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="1"
+                                      className="h-8 w-24"
+                                      value={scoreUpdate[game.id]?.home ?? game.homeScore ?? 0}
+                                      onChange={(e) => setScoreUpdate((prev) => ({
+                                        ...prev,
+                                        [game.id]: {
+                                          ...(prev[game.id] || { home: game.homeScore ?? 0, away: game.awayScore ?? 0 }),
+                                          home: e.target.value === "" ? 0 : Number(e.target.value),
+                                        },
+                                      }))}
+                                    />
+                                  </div>
+                                  <span className="pb-2 text-muted-foreground">-</span>
+                                  <div>
+                                    <label className="text-xs text-muted-foreground">Full-time away score</label>
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="1"
+                                      className="h-8 w-24"
+                                      value={scoreUpdate[game.id]?.away ?? game.awayScore ?? 0}
+                                      onChange={(e) => setScoreUpdate((prev) => ({
+                                        ...prev,
+                                        [game.id]: {
+                                          ...(prev[game.id] || { home: game.homeScore ?? 0, away: game.awayScore ?? 0 }),
+                                          away: e.target.value === "" ? 0 : Number(e.target.value),
+                                        },
+                                      }))}
+                                    />
+                                  </div>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isApiManagedGame(game.id)}
+                                    onClick={() => updateFinishedGameScore(game.id)}
                                     className="text-xs"
                                   >
-                                    <Edit2 className="mr-1 h-3 w-3" />
-                                    {editingGameDetails === game.id ? "Close Edit" : "Edit Details"}
+                                    <Save className="mr-1 h-3 w-3" /> Update Full-time Score
                                   </Button>
                                 </div>
                               </div>
@@ -4040,13 +4296,20 @@ const AdminPortal = () => {
           <TabsContent value="users" className="space-y-6">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="font-display text-sm font-bold uppercase tracking-wider text-foreground">Manage Users</h3>
+              <Button size="sm" variant="outline" onClick={refreshUsers} disabled={loadingUsers}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${loadingUsers ? "animate-spin" : ""}`} />
+                {loadingUsers ? "Refreshing..." : "Refresh Users"}
+              </Button>
             </div>
             
             <div className="mb-6">
               <Input
                 placeholder="Search users by name, username, phone, email, or user ID..."
                 value={userSearchQuery}
-                onChange={(e) => setUserSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setUserSearchQuery(e.target.value);
+                  setUserPage(0);
+                }}
                 className="h-10"
               />
               <p className="mt-2 text-xs text-muted-foreground">
@@ -4054,12 +4317,13 @@ const AdminPortal = () => {
                   ? `Found ${filteredUsers.length} user${filteredUsers.length !== 1 ? 's' : ''}` 
                   : userSearchQuery 
                   ? 'No users found' 
-                  : `Showing all ${users.length} users`}
+                  : `Showing ${paginatedUsers.length ? userPage * usersPageSize + 1 : 0}-${Math.min((userPage + 1) * usersPageSize, filteredUsers.length)} of ${users.length} users`}
               </p>
+              {usersLoadError && <p role="alert" className="mt-2 text-xs text-destructive">{usersLoadError}</p>}
             </div>
 
             <div className="space-y-3">
-              {filteredUsers.map((user) => (
+              {paginatedUsers.map((user) => (
                 <Card key={user.id} className="border-border bg-card p-4">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
@@ -4348,6 +4612,29 @@ const AdminPortal = () => {
                 </Card>
               ))}
             </div>
+            {usersPageCount > 1 && (
+              <div className="flex items-center justify-center gap-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={userPage === 0}
+                  onClick={() => setUserPage((page) => Math.max(0, page - 1))}
+                >
+                  Previous
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Page {userPage + 1} of {usersPageCount}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={userPage + 1 >= usersPageCount}
+                  onClick={() => setUserPage((page) => Math.min(usersPageCount - 1, page + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
           </TabsContent>
 
           <Dialog open={showManualTransactionDialog} onOpenChange={setShowManualTransactionDialog}>
@@ -4809,23 +5096,29 @@ const AdminPortal = () => {
                     C2B Mismatches
                   </h3>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Offline Paybill payments that were received but could not be matched to a BETNEXA ID or phone number.
+                    Paybill payments with an unknown account reference. These payments are not credited automatically.
                   </p>
+                  {c2bMismatchesError && (
+                    <p role="alert" className="mt-2 text-xs text-destructive">{c2bMismatchesError}</p>
+                  )}
                 </div>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={fetchC2bMismatches}
-                  disabled={loadingPayments}
+                  disabled={loadingC2bMismatches}
                 >
-                  <RefreshCw className="mr-1 h-4 w-4" /> Refresh
+                  <RefreshCw className={`mr-1 h-4 w-4 ${loadingC2bMismatches ? "animate-spin" : ""}`} />
+                  {loadingC2bMismatches ? "Refreshing..." : "Refresh"}
                 </Button>
               </div>
             </Card>
 
             {c2bMismatches.length === 0 ? (
               <Card className="border-border bg-card p-6 text-center text-sm text-muted-foreground">
-                No C2B mismatches have been recorded.
+                {c2bMismatchesError
+                  ? "Could not load C2B mismatch records."
+                  : "No C2B mismatches have been recorded."}
               </Card>
             ) : (
               <div className="space-y-3">
@@ -4844,7 +5137,7 @@ const AdminPortal = () => {
                             {formatTransactionDateInEAT(mismatch.created_at)} via {mismatch.method || 'M-Pesa C2B Paybill'}
                           </p>
                           <p className="mt-1 break-all text-xs text-muted-foreground">
-                            Receipt: {mismatch.mpesa_receipt || 'Not provided'} · Phone field: {mismatch.phone_number || 'Not provided'}
+                            Account: {mismatch.account_reference || 'Not provided'} · Receipt: {mismatch.mpesa_receipt || 'Not provided'} · Payer phone: {mismatch.phone_number || 'Not provided'}
                           </p>
                         </div>
                       </div>

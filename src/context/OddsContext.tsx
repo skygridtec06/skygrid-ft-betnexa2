@@ -36,13 +36,50 @@ interface OddsContextType {
   refreshGames: () => Promise<void>;
 }
 
+const GAME_CACHE_KEY = "betnexa_games_cache";
+
+const readCachedGames = (): GameOdds[] => {
+  try {
+    const cached = localStorage.getItem(GAME_CACHE_KEY);
+    if (!cached) return [];
+
+    const parsed: unknown = JSON.parse(cached);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter((game): game is GameOdds => (
+      typeof game === "object" &&
+      game !== null &&
+      typeof game.id === "string" &&
+      typeof game.league === "string" &&
+      typeof game.homeTeam === "string" &&
+      typeof game.awayTeam === "string" &&
+      typeof game.time === "string" &&
+      (game.status === "upcoming" || game.status === "live" || game.status === "finished") &&
+      typeof game.markets === "object" &&
+      game.markets !== null
+    ));
+  } catch (error) {
+    console.warn("Unable to read cached games:", error);
+    return [];
+  }
+};
+
+const writeCachedGames = (games: GameOdds[]) => {
+  try {
+    localStorage.setItem(GAME_CACHE_KEY, JSON.stringify(games));
+  } catch (error) {
+    console.warn("Unable to cache games:", error);
+  }
+};
+
 const OddsContext = createContext<OddsContextType | undefined>(undefined);
 
 export function OddsProvider({ children }: { children: ReactNode }) {
-  const [games, setGames] = useState<GameOdds[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [initialGames] = useState(readCachedGames);
+  const [games, setGames] = useState<GameOdds[]>(initialGames);
+  const [isLoading, setIsLoading] = useState(initialGames.length === 0);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const gamesRef = useRef<GameOdds[]>([]);
+  const gamesRef = useRef<GameOdds[]>(initialGames);
   const kickoffTimesRef = useRef<Record<string, number>>({}); // Track when each game kicked off
   const fetchInProgressRef = useRef(false); // Prevent duplicate fetches
   const refreshInProgressRef = useRef(false); // Prevent overlapping full database scans
@@ -103,7 +140,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
     onFirstPage?: (games: any[]) => void,
     status?: string
   ) => {
-    const pageSize = 250;
+    const pageSize = 500;
     const allGames: any[] = [];
     const fetchPage = async (page: number) => {
       const response = await fetch(
@@ -189,28 +226,25 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           kickoffPausedAt: g.kickoff_paused_at || undefined,
           isHalftime: g.is_halftime || false,
           sport: g.sport || 'football',
+          isHot: g.is_hot || false,
         }));
-        const visibleGames = mergePendingLocalGames(firstGames);
+        const visibleGames = mergePendingLocalGames([...gamesRef.current, ...firstGames]);
         setGames(visibleGames);
         gamesRef.current = visibleGames;
         setIsLoading(false);
         console.log('⚡ Rendered first game page:', visibleGames.length);
       };
 
-      // Upcoming is the first user-visible section. Request the filtered
-      // complete list so it renders together instead of showing an ID-sorted
-      // subset while the full archive loads.
-      const upcomingResponse = await fetch(`${apiUrl}/admin/games?status=upcoming`, { keepalive: true });
-      if (!upcomingResponse.ok) {
-        throw new Error(`Upcoming games request failed with HTTP ${upcomingResponse.status}`);
-      }
-      const upcomingData = await upcomingResponse.json();
-      if (!upcomingData.success || !Array.isArray(upcomingData.games)) {
-        throw new Error('Upcoming games response did not contain a valid list');
-      }
-      showFirstPage(upcomingData.games);
-      const data = await fetchAllGames(apiUrl);
-      console.log('📊 Loaded all game pages');
+      const statuses = ["upcoming", "live", "finished"];
+      const statusResults = await Promise.all(statuses.map((status) => (
+        fetchAllGames(apiUrl, undefined, showFirstPage, status)
+      )));
+      const data = {
+        success: statusResults.every((result) => result.success),
+        games: statusResults.flatMap((result) => result.games),
+        total_games: statusResults.reduce((total, result) => total + result.total_games, 0),
+      };
+      console.log('📊 Loaded all status-filtered game pages');
 
       if (data.success && Array.isArray(data.games)) {
           console.log(
@@ -243,6 +277,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
             kickoffPausedAt: g.kickoff_paused_at || undefined,
             isHalftime: g.is_halftime || false,
             sport: g.sport || 'football',
+            isHot: g.is_hot || false,
           }));
           
           // Remove duplicates by ID and sort by ID for stable ordering to prevent reranking/collision issues
@@ -259,6 +294,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           const sortedGames = mergePendingLocalGames(deduplicatedGames);
           setGames(sortedGames);
           gamesRef.current = sortedGames;
+          writeCachedGames(sortedGames);
           for (const gameId of pendingLocalGamesRef.current.keys()) {
             if (deduplicatedGames.some((game) => game.id === gameId)) {
               pendingLocalGamesRef.current.delete(gameId);
@@ -281,14 +317,6 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       fetchInProgressRef.current = false;
     }
   }, [fetchAllGames, mergePendingLocalGames, preserveCurrentGames]);
-
-  useEffect(() => {
-    try {
-      localStorage.removeItem('betnexa_games_cache');
-    } catch (error) {
-      console.warn('⚠️ Unable to clear stale local game cache:', error);
-    }
-  }, []);
 
   // Fetch games immediately on mount - this runs before useEffect
   useEffect(() => {
@@ -458,9 +486,17 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       // than Supabase's 1,000-row response limit.
       const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      const data = await fetchAllGames(`${apiUrl}/api`, controller.signal);
-
+      const statuses = ["upcoming", "live", "finished"];
+      const statusResults = await Promise.all(statuses.map((status) => (
+        fetchAllGames(`${apiUrl}/api`, controller.signal, undefined, status)
+      )));
       clearTimeout(timeoutId);
+      const data = {
+        success: statusResults.every((result) => result.success),
+        games: statusResults.flatMap((result) => result.games),
+        total_games: statusResults.reduce((total, result) => total + result.total_games, 0),
+        pagination: { complete: true },
+      };
 
       if (data.success && Array.isArray(data.games)) {
           if (data.pagination?.complete !== true) {
@@ -505,6 +541,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           const sortedGames = mergePendingLocalGames(deduplicatedGames);
           setGames(sortedGames);
           gamesRef.current = sortedGames;
+          writeCachedGames(sortedGames);
       } else {
         preserveCurrentGames();
       }
