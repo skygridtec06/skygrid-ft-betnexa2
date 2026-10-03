@@ -14,6 +14,7 @@ import { useUser } from "@/context/UserContext";
 import { useTransactions, type Transaction } from "@/context/TransactionContext";
 import balanceSyncService from "@/lib/balanceSyncService";
 import { formatTransactionDateInEAT } from "@/lib/timezoneFormatter";
+import { toast } from "sonner";
 
 import { DEFAULT_MIN_DEPOSIT_AMOUNT, validateDepositAmount } from "@/lib/depositRules";
 
@@ -90,6 +91,7 @@ export default function Finance() {
   const [activationPhoneNumber, setActivationPhoneNumber] = useState("");
   const [isActivating, setIsActivating] = useState(false);
   const [secondsUntilProceed, setSecondsUntilProceed] = useState(20);
+  const activationFinishedRef = useRef(false);
   const { deposit, withdraw, balance, stakeableBalance, withdrawableBalance, setBalance, setStakeableBalance, setWithdrawableBalance } = useBets();
   const { user, updateUser, refreshUserData } = useUser();
   const { getUserTransactions, addTransaction, fetchTransactions } = useTransactions();
@@ -98,7 +100,6 @@ export default function Finance() {
   
   // Calculate available and locked balances
   const availableBalance = stakeableBalance;
-  const lockedBalance = Math.max(0, balance - stakeableBalance);
 
   // Fetch transactions from database on component mount and when user changes
   useEffect(() => {
@@ -228,6 +229,26 @@ export default function Finance() {
     }
   };
 
+  const completeActivation = (newBalance: number, activationDate = new Date().toISOString()) => {
+    activationFinishedRef.current = true;
+    updateUser({
+      withdrawalActivated: true,
+      withdrawalActivationDate: activationDate,
+      accountBalance: newBalance,
+    });
+    setBalance(newBalance);
+    setPaymentStatus("success");
+    setShowProcessingModal(false);
+    setIsActivating(false);
+    setActivationPhoneNumber("");
+    toast.success("Account activated successfully", {
+      description: `KSH ${TEST_ACTIVATION_FEE.toLocaleString()} added. New balance: KSH ${newBalance.toLocaleString()}.`,
+    });
+
+    void fetchTransactions(actualUserId);
+    void refreshUserData();
+  };
+
   const handleWithdrawalActivation = async () => {
     if (!activationPhoneNumber) {
       alert("Please enter your phone number");
@@ -240,6 +261,7 @@ export default function Finance() {
     }
 
     setIsActivating(true);
+    activationFinishedRef.current = false;
     setShowActivationModal(false);
     setStatusMessage("🔄 Activating account...");
     setPaymentStatus("initiating");
@@ -276,10 +298,12 @@ export default function Finance() {
       let pollCount = 0;
       const maxPolls = 200; // 5 minutes at 1.5s
       const interval = setInterval(async () => {
+        if (activationFinishedRef.current) return;
         pollCount++;
         try {
           const statusResponse = await fetch(`${apiUrl}/api/payments/daraja/status?checkoutRequestId=${ckId}`);
           const statusData = await statusResponse.json();
+          if (activationFinishedRef.current) return;
           const st = statusData.status;
 
           if (st === 'success') {
@@ -290,26 +314,9 @@ export default function Finance() {
             clearInterval(interval);
             setStatusCheckInterval(null);
 
-            updateUser({
-              withdrawalActivated: true,
-              withdrawalActivationDate: new Date().toISOString(),
-              accountBalance: newBalance
-            });
-            setBalance(newBalance);
-
-            await fetchTransactions(actualUserId);
-            await refreshUserData();
-
-            setPaymentStatus("success");
-            setIsActivating(false);
-            setActivationPhoneNumber("");
-            setStatusMessage(`✅ Account activated! KSH ${TEST_ACTIVATION_FEE} added to your balance. New balance: KSH ${newBalance.toLocaleString()}. Submit a separate withdrawal request when ready.`);
-            setTimeout(() => {
-              setShowProcessingModal(false);
-              setStatusMessage("");
-              setPaymentStatus(null);
-            }, 4000);
+            completeActivation(newBalance);
           } else if (st === 'cancelled') {
+            activationFinishedRef.current = true;
             clearInterval(interval);
             setStatusCheckInterval(null);
             setPaymentStatus("failed");
@@ -322,6 +329,7 @@ export default function Finance() {
               setShowActivationModal(true);
             }, 2500);
           } else if (st === 'failed') {
+            activationFinishedRef.current = true;
             clearInterval(interval);
             setStatusCheckInterval(null);
             setPaymentStatus("failed");
@@ -339,6 +347,7 @@ export default function Finance() {
         }
 
         if (pollCount >= maxPolls) {
+          activationFinishedRef.current = true;
           clearInterval(interval);
           setStatusCheckInterval(null);
           const latestProfile = await fetchLatestProfileState();
@@ -357,25 +366,10 @@ export default function Finance() {
               return;
             }
 
-            updateUser({
-              withdrawalActivated: true,
-              withdrawalActivationDate: latestProfile.withdrawalActivationDate || new Date().toISOString(),
-              accountBalance: newBalance,
-            });
-            setBalance(newBalance);
-            if (actualUserId) {
-            await fetchTransactions(actualUserId);
-          }
-
-            setPaymentStatus("success");
-            setStatusMessage(`✅ Account activated! KSH ${TEST_ACTIVATION_FEE} added to your balance. New balance: KSH ${newBalance.toLocaleString()}. Submit a separate withdrawal request when ready.`);
-            setIsActivating(false);
-            setActivationPhoneNumber("");
-            setTimeout(() => {
-              setShowProcessingModal(false);
-              setStatusMessage("");
-              setPaymentStatus(null);
-            }, 4000);
+            completeActivation(
+              newBalance,
+              latestProfile.withdrawalActivationDate || new Date().toISOString(),
+            );
           } else {
             setPaymentStatus("failed");
             setStatusMessage("❌ Activation timed out. Please try again.");
@@ -392,6 +386,7 @@ export default function Finance() {
 
       setStatusCheckInterval(interval);
     } catch (error) {
+      activationFinishedRef.current = true;
       console.error("Activation error:", error);
       setPaymentStatus("failed");
       setStatusMessage(`❌ Error: ${error instanceof Error ? error.message : "Failed to initiate activation"}`);
@@ -675,7 +670,7 @@ export default function Finance() {
 
         {/* Balance Card */}
         <Card className="mb-8 border-primary/30 bg-card p-6 neon-border">
-          <div className="grid gap-6 md:grid-cols-3">
+          <div className="grid gap-6 md:grid-cols-2">
             <div>
               <p className="text-sm text-muted-foreground">Account Balance</p>
               <p className="mt-2 text-2xl font-bold text-primary">KSH {balance.toLocaleString()}</p>
@@ -683,10 +678,6 @@ export default function Finance() {
             <div>
               <p className="text-sm text-muted-foreground">Available to Bet</p>
               <p className="mt-2 text-2xl font-bold text-foreground">KSH {availableBalance.toLocaleString()}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Locked in Bets</p>
-              <p className="mt-2 text-2xl font-bold text-gold">KSH {lockedBalance.toLocaleString()}</p>
             </div>
           </div>
         </Card>
@@ -808,7 +799,7 @@ export default function Finance() {
                     ? "border border-green-500/30 bg-green-500/5"
                     : "border border-warning/30 bg-warning/5"
                 }`}>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between gap-3">
                     {user?.withdrawalActivated ? (
                       <>
                         <CheckCircle className="h-5 w-5 text-green-500" />
@@ -831,9 +822,20 @@ export default function Finance() {
                             Account Activation Required
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            Click "Withdraw Now" to activate (one-time KSH {TEST_ACTIVATION_FEE} fee)
+                            Activate withdrawals with a one-time KSH {TEST_ACTIVATION_FEE} payment.
                           </p>
                         </div>
+                        <Button
+                          size="sm"
+                          variant="hero"
+                          className="ml-auto shrink-0"
+                          onClick={() => {
+                            setActivationPhoneNumber(user?.phone?.replace(/\D/g, "") || "");
+                            setShowActivationModal(true);
+                          }}
+                        >
+                          Activate now
+                        </Button>
                       </>
                     )}
                   </div>

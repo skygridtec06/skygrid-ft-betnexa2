@@ -2990,18 +2990,12 @@ const AdminPortal = () => {
         </div>
 
         <Tabs value={adminTab} onValueChange={handleTabChange}>
-          <TabsList className="mb-6 bg-secondary grid w-full grid-cols-8">
+          <TabsList className="mb-6 bg-secondary grid w-full grid-cols-6">
             <TabsTrigger value="games" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Trophy className="mr-1 h-4 w-4" /> Games
             </TabsTrigger>
-            <TabsTrigger value="events" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Calendar className="mr-1 h-4 w-4" /> Events
-            </TabsTrigger>
             <TabsTrigger value="users" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Users className="mr-1 h-4 w-4" /> Users
-            </TabsTrigger>
-            <TabsTrigger value="broadcast" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Megaphone className="mr-1 h-4 w-4" /> Broadcast
             </TabsTrigger>
             <TabsTrigger value="earnings" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <BarChart3 className="mr-1 h-4 w-4" /> Earnings
