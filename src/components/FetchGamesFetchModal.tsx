@@ -64,17 +64,27 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
         })
       });
 
-      const data = await response.json();
+      const data: {
+        success?: boolean;
+        error?: string;
+        details?: string;
+        games?: GamePreview[];
+        warnings?: Array<{ date?: string; error?: string }>;
+      } = await response.json();
 
-      if (!data.success) {
-        setErrorMsg(data.error || 'Failed to fetch games');
+      if (!response.ok || !data.success) {
+        setErrorMsg(
+          data.details ||
+          data.error ||
+          `The API request failed (HTTP ${response.status}).`
+        );
         setStep('error');
         return;
       }
 
       setGames(data.games || []);
       setOddsWarnings(Array.isArray(data.warnings)
-        ? data.warnings.map((warning: { date?: string; error?: string }) =>
+        ? data.warnings.map(warning =>
           `${warning.date || 'Unknown date'}: ${warning.error || 'Odds unavailable'}`
         )
         : []);

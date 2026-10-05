@@ -388,13 +388,19 @@ router.post('/fetch-preview', checkAdmin, async (req, res) => {
       });
 
       if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`API ${response.status} on ${path}: ${body}`);
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('API Football rejected the configured API key. Check the backend API_FOOTBALL_KEY setting.');
+        }
+        throw new Error(`API Football request failed with HTTP ${response.status} on ${path}.`);
       }
 
       const json = await response.json();
       if (json?.errors && Object.keys(json.errors).length > 0) {
-        throw new Error(`API-Football provider error: ${Object.values(json.errors).join('; ')}`);
+        const providerMessage = Object.values(json.errors).flat().map(String).join('; ');
+        if (/missing application key|invalid (?:application |api )?key|invalid token|expired token/i.test(providerMessage)) {
+          throw new Error('API Football rejected the configured API key. Check the backend API_FOOTBALL_KEY setting.');
+        }
+        throw new Error(`API Football provider error: ${providerMessage}`);
       }
       return json;
     }
@@ -498,12 +504,13 @@ router.post('/fetch-preview', checkAdmin, async (req, res) => {
       next_step: 'Call /api/admin/fetch-api-football/execute with the games to add them to the site'
     });
   } catch (error) {
-    console.error('❌ Fetch preview error:', error.message);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('❌ Fetch preview error:', message);
     console.error('Stack:', error.stack);
-    res.status(500).json({
+    const status = message.startsWith('API Football rejected the configured API key') ? 502 : 500;
+    res.status(status).json({
       success: false,
-      error: 'Failed to fetch games from API Football',
-      details: error.message,
+      error: message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
