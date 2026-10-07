@@ -99,24 +99,10 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       if (game?.id) merged.set(game.id, game);
     }
 
+    // The server is the single source of truth. Only games created locally and
+    // not yet visible on the server are kept; they never override server data.
     for (const [gameId, pending] of pendingLocalGamesRef.current.entries()) {
-      const existing = merged.get(gameId);
-      if (!existing) {
-        merged.set(gameId, pending.game);
-      } else {
-        merged.set(gameId, { ...existing, ...pending.game });
-      }
-    }
-
-    for (const localGame of gamesRef.current) {
-      if (!localGame?.id) continue;
-      const isApiManaged = /^(af|ab|bb|tn|ck|bx)-/i.test(String(localGame.id || ''));
-      if (isApiManaged) continue;
-      if (!merged.has(localGame.id)) {
-        merged.set(localGame.id, localGame);
-      } else {
-        merged.set(localGame.id, { ...merged.get(localGame.id), ...localGame });
-      }
+      if (!merged.has(gameId)) merged.set(gameId, pending.game);
     }
 
     return sortGamesAdminFirst(Array.from(merged.values()));
@@ -392,6 +378,9 @@ export function OddsProvider({ children }: { children: ReactNode }) {
                 seconds: g.seconds ?? 0,
                 isHalftime: g.isHalftime ?? false,
                 gamePaused: g.gamePaused ?? false,
+                homeScore: g.homeScore,
+                awayScore: g.awayScore,
+                status: g.status,
                 source: 'batch'
               }));
             }
@@ -409,10 +398,22 @@ export function OddsProvider({ children }: { children: ReactNode }) {
         setGames(prev => {
           let hasChanges = false;
           const updated = prev.map(g => {
-            const timerUpdate = allResults.find(r => r.gameId === g.id);
-            if (timerUpdate && (g.minute !== timerUpdate.minute || g.seconds !== timerUpdate.seconds || g.isHalftime !== timerUpdate.isHalftime || g.gamePaused !== timerUpdate.gamePaused)) {
+            const timerUpdate: any = allResults.find(r => r.gameId === g.id);
+            if (!timerUpdate) return g;
+            const hasScore = Number.isFinite(timerUpdate.homeScore) && Number.isFinite(timerUpdate.awayScore);
+            const scoreChanged = hasScore && (g.homeScore !== timerUpdate.homeScore || g.awayScore !== timerUpdate.awayScore);
+            const statusChanged = timerUpdate.status && g.status !== timerUpdate.status;
+            if (scoreChanged || statusChanged || g.minute !== timerUpdate.minute || g.seconds !== timerUpdate.seconds || g.isHalftime !== timerUpdate.isHalftime || g.gamePaused !== timerUpdate.gamePaused) {
               hasChanges = true;
-              return { ...g, minute: timerUpdate.minute, seconds: timerUpdate.seconds, isHalftime: timerUpdate.isHalftime, gamePaused: timerUpdate.gamePaused };
+              return {
+                ...g,
+                minute: timerUpdate.minute,
+                seconds: timerUpdate.seconds,
+                isHalftime: timerUpdate.isHalftime,
+                gamePaused: timerUpdate.gamePaused,
+                ...(hasScore ? { homeScore: timerUpdate.homeScore, awayScore: timerUpdate.awayScore } : {}),
+                ...(timerUpdate.status ? { status: timerUpdate.status } : {}),
+              };
             }
             return g;
           });
@@ -553,6 +554,9 @@ export function OddsProvider({ children }: { children: ReactNode }) {
           setGames(sortedGames);
           gamesRef.current = sortedGames;
           writeCachedGames(sortedGames);
+          for (const gameId of pendingLocalGamesRef.current.keys()) {
+            if (seenIds.has(gameId)) pendingLocalGamesRef.current.delete(gameId);
+          }
       } else {
         preserveCurrentGames();
       }

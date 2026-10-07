@@ -27,7 +27,7 @@ interface FetchGamesFetchModalProps {
 const getDefaultDateRange = () => {
   const from = new Date();
   const to = new Date(from);
-  to.setDate(to.getDate() + 7);
+  to.setDate(to.getDate() + 1);
   return {
     from: from.toISOString().slice(0, 10),
     to: to.toISOString().slice(0, 10),
@@ -186,7 +186,7 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
               {oddsWarnings.length > 0 && (
                 <div role="alert" className="bg-yellow-500/10 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
                   <p className="text-sm font-semibold text-yellow-700 dark:text-yellow-300">
-                    Some odds could not be loaded. These fixtures are still available and use fallback odds.
+                    Some provider data could not be loaded. Available fixtures may still be shown with fallback odds.
                   </p>
                   <ul className="mt-2 space-y-1 text-xs text-yellow-700 dark:text-yellow-400">
                     {oddsWarnings.slice(0, 5).map((warning, index) => (

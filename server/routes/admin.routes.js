@@ -746,6 +746,37 @@ function generateDefaultMarkets(gameUUID, homeOdds, drawOdds, awayOdds) {
   return markets;
 }
 
+// Single canonical clock so every client and endpoint reports the same minute.
+// Admin/scheduler games derive time from kickoff_start_time (resume rewinds it to 45:00),
+// so unrelated row updates (score edits, odds) never shift the clock.
+// API-managed games anchor on the provider minute stored at last sync.
+function computeGameClock(data, serverNow) {
+  const storedMinute = parseInt(data.minute, 10) || 0;
+  if (data.status === 'finished') return { minute: storedMinute, seconds: 0 };
+  if (data.is_halftime || data.game_paused) return { minute: storedMinute, seconds: 0 };
+  if (!data.is_kickoff_started) return { minute: 0, seconds: 0 };
+
+  const kickoffMs = data.kickoff_start_time ? new Date(data.kickoff_start_time).getTime() : NaN;
+  const updatedAtMs = data.updated_at ? new Date(data.updated_at).getTime() : NaN;
+  const apiManaged = isApiManagedGameId(data.game_id);
+
+  let totalSeconds;
+  if (!apiManaged && Number.isFinite(kickoffMs)) {
+    totalSeconds = Math.floor((serverNow - kickoffMs) / 1000);
+  } else if (Number.isFinite(updatedAtMs)) {
+    totalSeconds = storedMinute * 60 + Math.floor((serverNow - updatedAtMs) / 1000);
+  } else if (Number.isFinite(kickoffMs)) {
+    totalSeconds = Math.floor((serverNow - kickoffMs) / 1000);
+  } else {
+    return { minute: storedMinute, seconds: 0 };
+  }
+
+  totalSeconds = Math.max(0, totalSeconds);
+  const minute = Math.floor(totalSeconds / 60);
+  if (minute > 130) return { minute: storedMinute, seconds: 0 };
+  return { minute, seconds: totalSeconds % 60 };
+}
+
 // ⏱️ GET: Get current server time for a game (MUST BE BEFORE other /games routes)
 router.get('/games/:gameId/time', async (req, res) => {
   try {
@@ -762,7 +793,7 @@ router.get('/games/:gameId/time', async (req, res) => {
     // Query the database - search by game_id field (the text ID)
     const query = supabase
       .from('games')
-      .select('id, game_id, kickoff_start_time, is_kickoff_started, status, is_halftime, game_paused, minute, updated_at')
+      .select('id, game_id, kickoff_start_time, is_kickoff_started, status, is_halftime, game_paused, minute, updated_at, home_score, away_score')
       .eq('game_id', gameId);
 
     const { data, error } = await query.maybeSingle();
@@ -808,35 +839,7 @@ router.get('/games/:gameId/time', async (req, res) => {
 
     let minute = 0;
     let seconds = 0;
-    const storedMinute = parseInt(data.minute, 10) || 0;
-
-    // Freeze timer during halftime/pause so UI clearly shows HALFTIME and doesn't keep counting.
-    if (data.is_halftime || data.game_paused) {
-      minute = storedMinute;
-      seconds = 0;
-      // Removed logging: Paused state (high-frequency)
-    } else if (data.is_kickoff_started && updatedAtMs && !isNaN(updatedAtMs)) {
-      // Use API-reported minute as anchor and only interpolate seconds from last sync.
-      // This prevents long-halftime drift (e.g. 108' while real minute is ~90').
-      const sinceUpdateSeconds = Math.max(0, Math.floor((serverNow - updatedAtMs) / 1000));
-      minute = storedMinute + Math.floor(sinceUpdateSeconds / 60);
-      seconds = sinceUpdateSeconds % 60;
-
-      // Safety cap while still allowing stoppage time.
-      if (minute > 130) {
-        minute = storedMinute;
-        seconds = 0;
-      }
-      // Removed logging: timer calculation (high-frequency)
-    } else if (data.is_kickoff_started && kickoffMs && !isNaN(kickoffMs)) {
-      // Fallback for legacy rows missing updated_at
-      const elapsedMs = serverNow - kickoffMs;
-      const elapsedSeconds = Math.floor(elapsedMs / 1000);
-      minute = Math.floor(elapsedSeconds / 60);
-      seconds = elapsedSeconds % 60;
-    } else {
-      // Removed logging: Game not started state (high-frequency)
-    }
+    ({ minute, seconds } = computeGameClock(data, serverNow));
 
     // Send response
     res.json({
@@ -895,7 +898,7 @@ router.get('/games/times/batch', async (req, res) => {
     // Fetch all games in one query
     const { data: games, error } = await supabase
       .from('games')
-      .select('id, game_id, kickoff_start_time, is_kickoff_started, status, is_halftime, game_paused, minute, updated_at')
+      .select('id, game_id, kickoff_start_time, is_kickoff_started, status, is_halftime, game_paused, minute, updated_at, home_score, away_score')
       .in('game_id', gameIds);
 
     if (error) {
@@ -915,43 +918,24 @@ router.get('/games/times/batch', async (req, res) => {
 
     const serverNow = Date.now();
     const results = games.map(data => {
-      const kickoffMs = data.kickoff_start_time ? new Date(data.kickoff_start_time).getTime() : null;
-      const updatedAtMs = data.updated_at ? new Date(data.updated_at).getTime() : null;
-      let minute = 0;
-      let seconds = 0;
-      const storedMinute = parseInt(data.minute, 10) || 0;
-
-      // Same logic as single endpoint
-      if (data.is_halftime || data.game_paused) {
-        minute = storedMinute;
-        seconds = 0;
-      } else if (data.is_kickoff_started && updatedAtMs && !isNaN(updatedAtMs)) {
-        const sinceUpdateSeconds = Math.max(0, Math.floor((serverNow - updatedAtMs) / 1000));
-        minute = storedMinute + Math.floor(sinceUpdateSeconds / 60);
-        seconds = sinceUpdateSeconds % 60;
-        if (minute > 130) {
-          minute = storedMinute;
-          seconds = 0;
-        }
-      } else if (data.is_kickoff_started && kickoffMs && !isNaN(kickoffMs)) {
-        const elapsedMs = serverNow - kickoffMs;
-        const elapsedSeconds = Math.floor(elapsedMs / 1000);
-        minute = Math.floor(elapsedSeconds / 60);
-        seconds = elapsedSeconds % 60;
-      }
+      const { minute, seconds } = computeGameClock(data, serverNow);
 
       return {
         gameId: data.game_id,
         minute,
         seconds,
+        homeScore: data.home_score ?? 0,
+        awayScore: data.away_score ?? 0,
         isHalftime: data.is_halftime,
         gamePaused: data.game_paused,
         status: data.status
       };
     });
 
+    res.set('Cache-Control', 'no-store');
     res.json({
       success: true,
+      serverTime: serverNow,
       games: results
     });
 

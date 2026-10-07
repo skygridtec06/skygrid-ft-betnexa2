@@ -360,7 +360,7 @@ router.post('/fetch-preview', checkAdmin, async (req, res) => {
     const today = new Date();
     const defaultFrom = today.toISOString().slice(0, 10);
     const defaultToDate = new Date(today);
-    defaultToDate.setUTCDate(defaultToDate.getUTCDate() + 7);
+    defaultToDate.setUTCDate(defaultToDate.getUTCDate() + 1);
     const from = req.body.from || defaultFrom;
     const to = req.body.to || defaultToDate.toISOString().slice(0, 10);
 
@@ -381,13 +381,25 @@ router.post('/fetch-preview', checkAdmin, async (req, res) => {
       });
     }
 
+    const warnings = [];
+    let nextApiRequestAt = 0;
     async function apiGet(path, params = {}) {
+      const now = Date.now();
+      const waitMs = Math.max(0, nextApiRequestAt - now);
+      nextApiRequestAt = Math.max(now, nextApiRequestAt) + 6500;
+      if (waitMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+      }
+
       const query = new URLSearchParams(params).toString();
       const response = await fetch(`${API_BASE}${path}?${query}`, {
         headers: { 'x-apisports-key': apiKey }
       });
 
       if (!response.ok) {
+        if (response.status === 429) {
+          throw new Error('API Football rate limit reached. Wait briefly before trying again.');
+        }
         if (response.status === 401 || response.status === 403) {
           throw new Error('API Football rejected the configured API key. Check the backend API_FOOTBALL_KEY setting.');
         }
@@ -397,6 +409,9 @@ router.post('/fetch-preview', checkAdmin, async (req, res) => {
       const json = await response.json();
       if (json?.errors && Object.keys(json.errors).length > 0) {
         const providerMessage = Object.values(json.errors).flat().map(String).join('; ');
+        if (/too many requests|per-minute request limit|rate limit/i.test(providerMessage)) {
+          throw new Error('API Football rate limit reached. Wait briefly before trying again.');
+        }
         if (/missing application key|invalid (?:application |api )?key|invalid token|expired token/i.test(providerMessage)) {
           throw new Error('API Football rejected the configured API key. Check the backend API_FOOTBALL_KEY setting.');
         }
@@ -411,7 +426,23 @@ router.post('/fetch-preview', checkAdmin, async (req, res) => {
       let lastPage = 1;
 
       do {
-        const json = await apiGet(path, { ...params, page });
+        let json;
+        try {
+          json = await apiGet(path, { ...params, page });
+        } catch (error) {
+          if (page === 1) throw error;
+
+          const message = error instanceof Error ? error.message : String(error);
+          const pageLimitReached = /maximum value of 3 for the Page parameter/i.test(message);
+          warnings.push({
+            date: params.date || 'Unknown date',
+            error: pageLimitReached
+              ? 'The API Football plan limits odds to the first 3 pages; odds from those pages were retained.'
+              : `Odds pagination stopped at page ${page}; odds from earlier pages were retained: ${message}`
+          });
+          console.warn(`⚠️ Keeping partial odds for ${params.date || path}: ${message}`);
+          return items;
+        }
         const pageItems = json.response || [];
         items.push(...pageItems);
 
@@ -425,38 +456,66 @@ router.post('/fetch-preview', checkAdmin, async (req, res) => {
       return items;
     }
 
-    const allFixtures = await apiGetAllPages('/fixtures', { from, to, timezone: TZ });
+    const fixtureDatesToFetch = [];
+    const dateCursor = new Date(`${from}T00:00:00.000Z`);
+    const lastDate = new Date(`${to}T00:00:00.000Z`);
+    while (dateCursor <= lastDate) {
+      fixtureDatesToFetch.push(dateCursor.toISOString().slice(0, 10));
+      dateCursor.setUTCDate(dateCursor.getUTCDate() + 1);
+    }
+    const allFixtures = [];
+    for (let dateIndex = 0; dateIndex < fixtureDatesToFetch.length; dateIndex++) {
+      const date = fixtureDatesToFetch[dateIndex];
+      try {
+        const fixtureResponse = await apiGet('/fixtures', { date });
+        allFixtures.push(...(fixtureResponse.response || []));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const availableRange = message.match(
+          /Free plans do not have access to this date, try from (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})/i
+        );
+
+        if (!availableRange) throw error;
+
+        warnings.push({
+          date,
+          error: `This API Football plan only allows fixtures from ${availableRange[1]} through ${availableRange[2]}; out-of-range dates were skipped.`
+        });
+        console.warn(`⚠️ Skipping fixtures outside the API Football plan date window: ${message}`);
+
+        if (date < availableRange[1]) {
+          while (
+            dateIndex + 1 < fixtureDatesToFetch.length &&
+            fixtureDatesToFetch[dateIndex + 1] < availableRange[1]
+          ) {
+            dateIndex += 1;
+          }
+          continue;
+        }
+        if (date > availableRange[2]) break;
+      }
+    }
     const fixtures = allFixtures
       .filter(fixture => fixture?.fixture?.status?.short === 'NS');
     const fixtureDates = [...new Set(fixtures
       .map(fixture => fixture?.fixture?.date?.slice(0, 10))
       .filter(Boolean))];
-    const warnings = [];
     const oddsByFixture = new Map();
-    let nextDateIndex = 0;
-
-    const fetchOddsForNextDate = async () => {
-      while (nextDateIndex < fixtureDates.length) {
-        const date = fixtureDates[nextDateIndex++];
-        try {
-          const oddsEntries = await apiGetAllPages('/odds', { date, timezone: TZ });
-          for (const entry of oddsEntries) {
-            const fixtureId = entry?.fixture?.id;
-            if (!fixtureId) continue;
-            if (!oddsByFixture.has(fixtureId)) oddsByFixture.set(fixtureId, []);
-            oddsByFixture.get(fixtureId).push(entry);
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          warnings.push({ date, error: message });
-          console.warn(`⚠️ Could not fetch odds for ${date}; fixtures will use fallback odds: ${message}`);
+    for (const date of fixtureDates) {
+      try {
+        const oddsEntries = await apiGetAllPages('/odds', { date, timezone: TZ });
+        for (const entry of oddsEntries) {
+          const fixtureId = entry?.fixture?.id;
+          if (!fixtureId) continue;
+          if (!oddsByFixture.has(fixtureId)) oddsByFixture.set(fixtureId, []);
+          oddsByFixture.get(fixtureId).push(entry);
         }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        warnings.push({ date, error: message });
+        console.warn(`⚠️ Could not fetch odds for ${date}; fixtures will use fallback odds: ${message}`);
       }
-    };
-
-    await Promise.all(
-      Array.from({ length: Math.min(4, fixtureDates.length) }, () => fetchOddsForNextDate())
-    );
+    }
 
     const seenFixtureIds = new Set();
     const allMarketKeys = Object.values(REQUIRED_MARKETS).flat();
