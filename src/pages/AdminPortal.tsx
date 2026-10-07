@@ -1758,6 +1758,7 @@ const AdminPortal = () => {
     if (!game) return;
 
     try {
+      console.log(`📝 [SCORE UPDATE] Updating ${game.homeTeam} vs ${game.awayTeam}: ${homeScore}-${awayScore}`);
       const newOdds = adjustOddsBasedOnScore(game.homeOdds, game.drawOdds, game.awayOdds, homeScore, awayScore);
       // Preserve existing DB markets, only update 1X2 odds
       const existingMarkets = game.markets || {};
@@ -1778,6 +1779,7 @@ const AdminPortal = () => {
       const data = await response.json();
 
       if (data.success) {
+        console.log(`✅ [SCORE UPDATE] Backend updated successfully`);
         // Update local state - preserve DB markets, update 1X2 odds
         updateGame(gameId, {
           homeScore,
@@ -1787,11 +1789,18 @@ const AdminPortal = () => {
           awayOdds: newOdds.awayOdds,
           markets: existingMarkets,
         });
+        // ✅ CRITICAL: Refresh from server so all devices sync immediately
+        // Without this, the admin device shows stale data and other devices
+        // might not see the update until the next polling cycle
+        console.log(`🔄 [SCORE SYNC] Refreshing games from server for all devices...`);
+        await refreshGames();
+        console.log(`✅ [SCORE SYNC] Complete - all devices should now see the new score`);
       } else {
+        console.error(`❌ [SCORE UPDATE] Backend error:`, data.error);
         alert(`Error: ${data.error || 'Failed to update score'}`);
       }
     } catch (error) {
-      console.error('Error updating score:', error);
+      console.error('❌ [SCORE UPDATE] Exception:', error);
       alert('Failed to update score');
     }
   };
