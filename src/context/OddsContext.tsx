@@ -37,7 +37,8 @@ interface OddsContextType {
   refreshGames: () => Promise<void>;
 }
 
-const GAME_CACHE_KEY = "betnexa_games_cache";
+const GAME_CACHE_KEY = "betnexa_games_cache_v2";
+const LEGACY_GAME_CACHE_KEY = "betnexa_games_cache";
 
 const sortGamesAdminFirst = (games: GameOdds[]) => (
   [...games].sort((a, b) => (
@@ -74,7 +75,11 @@ const readCachedGames = (): GameOdds[] => {
 
 const writeCachedGames = (games: GameOdds[]) => {
   try {
-    localStorage.setItem(GAME_CACHE_KEY, JSON.stringify(games));
+    localStorage.removeItem(LEGACY_GAME_CACHE_KEY);
+    // Only cache upcoming games for fast first paint. Live scores/minutes always
+    // come from the server so no browser can show stale values.
+    const upcoming = games.filter((game) => game.status === "upcoming").slice(0, 300);
+    localStorage.setItem(GAME_CACHE_KEY, JSON.stringify(upcoming));
   } catch (error) {
     console.warn("Unable to cache games:", error);
   }
@@ -328,7 +333,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const timerInterval = setInterval(async () => {
       // Find all live games that are in kickoff using the ref (avoids recreating interval)
-      const liveGames = gamesRef.current.filter(g => g.isKickoffStarted && (g.status === 'live' || g.minute === undefined));
+      const liveGames = gamesRef.current.filter(g => g.status === 'live' || g.isKickoffStarted && g.minute === undefined);
       
       if (liveGames.length === 0) return; // No live games, skip fetch
 
@@ -366,7 +371,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       let backendResults = [];
       if (backendGames.length > 0) {
         try {
-          const gameIds = backendGames.map(g => g.id).join(',');
+          const gameIds = backendGames.slice(0, 50).map(g => g.id).join(',');
           const response = await fetch(`${apiUrl}/api/admin/games/times/batch?ids=${encodeURIComponent(gameIds)}`);
 
           if (response.ok) {
