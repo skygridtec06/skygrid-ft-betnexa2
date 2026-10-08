@@ -87,16 +87,15 @@ const Index = ({ sport = 'football' }: IndexProps) => {
   const [activeView, setActiveView] = useState<MatchView>("upcoming");
   const [invalidPicksMessage, setInvalidPicksMessage] = useState<string>("");
   const [isLoadingBetslip, setIsLoadingBetslip] = useState(false);
-  const { games: apiGames, isLoading: isLoadingGames, isFullyLoaded } = useOdds();
+  const { games: apiGames, isLoading: isLoadingGames } = useOdds();
   const apiBaseUrl = buildApiUrl('/api');
 
   // Validate picks against current games
   const validatePicks = (picks: BetSlipItem[], gamesToCheck: any[]): { valid: BetSlipItem[]; invalid: boolean; message: string } => {
     const validPicks: BetSlipItem[] = [];
     
-    // Don't validate until every game has finished loading - a partially
-    // loaded list would wrongly report a real game as "does not exist".
-    if (!isFullyLoaded) {
+    // If games are still loading, don't validate yet - show loading message
+    if (gamesToCheck.length === 0 && isLoadingGames) {
       return { valid: [], invalid: false, message: "" }; // Wait for games to load
     }
     
@@ -189,10 +188,10 @@ const Index = ({ sport = 'football' }: IndexProps) => {
       if (urlPicks.length > 0) {
         // Only load if bet slip is empty (to avoid overwriting)
         if (betSlip.length === 0) {
-          // Wait until every game has loaded before judging whether the
-          // shared game exists - the list renders progressively, so an
-          // early partial list would wrongly flag a real game as missing.
-          if (!isFullyLoaded) {
+          // Validate against the first loaded batch - admin-added games
+          // (the main use case for shared links) are sorted into page one,
+          // so there's no need to wait for the entire dataset to finish.
+          if (isLoadingGames && apiGames.length === 0) {
             setIsLoadingBetslip(true);
             setInvalidPicksMessage(""); // Clear any previous error
             return;
@@ -223,7 +222,7 @@ const Index = ({ sport = 'football' }: IndexProps) => {
     };
 
     loadPicksFromUrl();
-  }, [apiGames, isLoadingGames, isFullyLoaded]); // Re-run when games or loading state changes
+  }, [apiGames, isLoadingGames]); // Re-run when games or loading state changes
 
   // Enable auto bet calculation
   useBetAutoCalculation();

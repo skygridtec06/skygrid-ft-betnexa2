@@ -66,7 +66,6 @@ app.use(cors({
   origin: (origin, callback) => {
     // Allow non-browser clients or same-origin requests without Origin header.
     if (!origin) {
-      console.log('[CORS] No origin provided, allowing');
       return callback(null, true);
     }
 
@@ -74,7 +73,6 @@ app.use(cors({
 
     // Allow specific whitelisted origins (with normalization)
     if (normalizedAllowedOrigins.has(normalizedOrigin)) {
-      console.log(`[CORS] ✅ Origin allowed (in whitelist): ${origin}`);
       // Return the origin that was actually requested to satisfy credentials: true
       return callback(null, origin);
     }
@@ -87,13 +85,11 @@ app.use(cors({
       hostname = '';
     }
     if (hostname.startsWith('betnexa') && hostname.endsWith('.vercel.app')) {
-      console.log(`[CORS] ✅ Origin allowed (Vercel domain): ${origin}`);
       return callback(null, origin);
     }
 
     // Allow localhost for development
     if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
-      console.log(`[CORS] ✅ Origin allowed (localhost): ${origin}`);
       return callback(null, origin);
     }
 
@@ -148,7 +144,7 @@ app.use((req, res, next) => {
     
     if (duration > 5000) {
       console.warn(`⚠️  [${duration}ms] ${req.method} ${req.path} - Status ${statusCode}`);
-    } else {
+    } else if (statusCode >= 400) {
       console.log(`📨 [${duration}ms] ${req.method} ${req.path} - Status ${statusCode}`);
     }
   });
