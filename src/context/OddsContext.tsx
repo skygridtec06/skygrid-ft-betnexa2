@@ -29,6 +29,7 @@ export interface GameOdds {
 interface OddsContextType {
   games: GameOdds[];
   isLoading: boolean;
+  isFullyLoaded: boolean;
   addGame: (game: GameOdds) => void;
   updateGame: (id: string, game: Partial<GameOdds>) => void;
   removeGame: (id: string) => void;
@@ -91,6 +92,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
   const [initialGames] = useState(readCachedGames);
   const [games, setGames] = useState<GameOdds[]>(initialGames);
   const [isLoading, setIsLoading] = useState(initialGames.length === 0);
+  const [isFullyLoaded, setIsFullyLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const gamesRef = useRef<GameOdds[]>(initialGames);
   const kickoffTimesRef = useRef<Record<string, number>>({}); // Track when each game kicked off
@@ -315,6 +317,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
       setLoadError(null); // Don't block app from loading
     } finally {
       setIsLoading(false);
+      setIsFullyLoaded(true);
       fetchInProgressRef.current = false;
     }
   }, [fetchAllGames, mergePendingLocalGames, preserveCurrentGames]);
@@ -637,7 +640,7 @@ export function OddsProvider({ children }: { children: ReactNode }) {
 
   return (
     <OddsContext.Provider
-      value={{ games, isLoading, addGame, updateGame, removeGame, getGame, updateGameMarkets, refreshGames }}
+      value={{ games, isLoading, isFullyLoaded, addGame, updateGame, removeGame, getGame, updateGameMarkets, refreshGames }}
     >
       {children}
     </OddsContext.Provider>
