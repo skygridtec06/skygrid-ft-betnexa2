@@ -228,30 +228,42 @@ router.post('/accountbalance/result', async (req, res) => {
       return;
     }
 
-    const resultParams = result.ResultParameters?.ResultParameter || [];
-    const rawBalances = resultParams.find((p) => p.Key === 'AccountBalance')?.Value || '';
+    const resultParams = result.ResultParameters?.ResultParameter;
+    const accountBalance = Array.isArray(resultParams)
+      ? resultParams.find((parameter) => parameter.Key === 'AccountBalance')?.Value
+      : null;
+    const rawBalances = typeof accountBalance === 'string' ? accountBalance : '';
+    if (!rawBalances.trim()) {
+      throw new Error('Daraja account balance callback did not contain AccountBalance data');
+    }
 
-    // Format: "Working Account|KES|700000.00|700000.00|0.00|0.00&Utility Account|KES|228037.00|..."
     const accounts = {};
     rawBalances.split('&').forEach((entry) => {
-      const parts = entry.split('|');
-      if (parts.length >= 3) {
-        accounts[parts[0].trim()] = {
-          currency: parts[1],
-          available: parseFloat(parts[2]) || 0,
-        };
+      const parts = entry.split('|').map((part) => part.trim());
+      const label = parts[0];
+      const available = Number.parseFloat(parts[2]);
+      if (label && parts[1] && Number.isFinite(available)) {
+        accounts[label] = { currency: parts[1], available };
       }
     });
 
+    const utilityAccount = Object.entries(accounts)
+      .find(([name]) => name.toLowerCase() === 'utility account')?.[1];
+    if (!utilityAccount) {
+      throw new Error('Daraja account balance callback did not contain Utility Account');
+    }
+
     const snapshot = {
       accounts,
-      utilityAvailable: accounts['Utility Account']?.available ?? null,
+      utilityAvailable: utilityAccount.available,
       fetchedAt: new Date().toISOString(),
     };
 
-    await supabase
+    const { error: saveError } = await supabase
       .from('settings')
       .upsert({ setting_key: 'mpesa_paybill_balance_snapshot', setting_value: JSON.stringify(snapshot), data_type: 'json' }, { onConflict: 'setting_key' });
+    if (saveError) throw saveError;
+    console.log('✅ [AccountBalance] Stored latest paybill balance snapshot');
   } catch (error) {
     console.error('❌ [AccountBalance] Result handling error:', error.message);
   }

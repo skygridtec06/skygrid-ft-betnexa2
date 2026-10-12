@@ -12,6 +12,7 @@ interface B2CTransaction {
   mpesa_transaction_id: string | null;
   amount: number;
   status: string;
+  result_description: string | null;
   remarks: string | null;
   initiated_by_admin_phone: string;
   created_at: string;
@@ -80,6 +81,9 @@ export const SpendingsPanel = ({ adminPhone }: { adminPhone: string }) => {
                     {new Date(tx.created_at).toLocaleString()} · by {tx.initiated_by_admin_phone}
                     {tx.remarks ? ` · ${tx.remarks}` : ''}
                   </p>
+                  {tx.status === 'failed' && tx.result_description && (
+                    <p className="text-destructive">{tx.result_description}</p>
+                  )}
                 </div>
                 <span className={`font-semibold uppercase ${statusColor(tx.status)}`}>{tx.status}</span>
               </div>

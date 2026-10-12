@@ -13,6 +13,7 @@ const darajaHttpsAgent = new https.Agent({ keepAlive: true });
 // Safety caps — override via env if the business wants different limits
 const MAX_SINGLE_AMOUNT = parseFloat(process.env.DARAJA_B2C_MAX_AMOUNT || '50000');
 const MAX_DAILY_AMOUNT = parseFloat(process.env.DARAJA_B2C_DAILY_CAP || '200000');
+const MIN_SINGLE_AMOUNT = 10;
 
 function getB2CConfig() {
   const clean = (value) => (typeof value === 'string' ? value.replace(/[\r\n\s]+/g, '').trim() : value);
@@ -100,6 +101,9 @@ async function sendB2CPayment({ recipientPhone, amount, commandId, remarks, occa
   if (!roundedAmount || roundedAmount <= 0) {
     throw new Error('Amount must be a positive number');
   }
+  if (roundedAmount < MIN_SINGLE_AMOUNT) {
+    throw new Error(`Amount must be at least KSH ${MIN_SINGLE_AMOUNT}`);
+  }
   if (roundedAmount > MAX_SINGLE_AMOUNT) {
     throw new Error(`Amount exceeds the per-transaction limit of KSH ${MAX_SINGLE_AMOUNT}`);
   }
@@ -170,52 +174,11 @@ async function requestAccountBalanceQuery({ remarks } = {}) {
   };
 }
 
-/**
- * Validate a recipient number before a payout.
- * Daraja returns the registered receiver name asynchronously in the B2C result callback.
- */
-async function validateRecipientIdentity({ recipientPhone }) {
-  const normalizedPhone = normalizeDarajaPhoneNumber(recipientPhone);
-  return {
-    normalizedPhone,
-    name: null,
-    nameAvailableAfterPayout: true,
-  };
-/*
-
-  const payload = {
-    header: {
-      requestID: crypto.randomUUID(),
-      timestamp: Math.floor(Date.now() / 1000).toString(),
-    },
-    body: {
-      msisdn: normalizedPhone,
-      shortcode: config.shortCode,
-    },
-  };
-
-  const accessToken = await getAccessToken();
-  const response = await performJsonRequest(
-    { method: 'POST', path: '/mpesa/b2c/hakikisha/v1/hakikisha', headers: { Authorization: `Bearer ${accessToken}` } },
-    payload
-  );
-
-  if (`${response.header?.status || ''}` !== '200') {
-    throw new Error(response.body?.message || response.header?.message || 'Identity validation failed');
-  }
-
-  const { firstName, middleName, lastName } = response.body || {};
-  const name = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
-
-  return { normalizedPhone, name };
-*/
-}
-
 module.exports = {
   sendB2CPayment,
   requestAccountBalanceQuery,
-  validateRecipientIdentity,
   getB2CConfig,
+  MIN_SINGLE_AMOUNT,
   MAX_SINGLE_AMOUNT,
   MAX_DAILY_AMOUNT,
 };

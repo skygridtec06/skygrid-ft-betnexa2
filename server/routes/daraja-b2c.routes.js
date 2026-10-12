@@ -5,10 +5,10 @@
  */
 
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const supabase = require('../services/database');
-const { sendB2CPayment, requestAccountBalanceQuery, validateRecipientIdentity, MAX_SINGLE_AMOUNT, MAX_DAILY_AMOUNT } = require('../services/darajaB2CService');
-const { normalizeDarajaPhoneNumber } = require('../services/darajaTestService');
+const { sendB2CPayment, requestAccountBalanceQuery, MIN_SINGLE_AMOUNT, MAX_SINGLE_AMOUNT, MAX_DAILY_AMOUNT } = require('../services/darajaB2CService');
 
 // Mirrors the checkAdmin pattern used across the other admin route files
 async function checkAdmin(req, res, next) {
@@ -18,17 +18,19 @@ async function checkAdmin(req, res, next) {
       return res.status(400).json({ success: false, error: 'Phone number required in request' });
     }
     if (!supabase) {
-      req.user = { id: 'unknown', phone, is_admin: true };
-      return next();
+      return res.status(503).json({ success: false, error: 'Admin access cannot be verified right now' });
     }
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('id, is_admin, role')
       .eq('phone_number', phone)
       .single();
-    if (userError || !user) {
-      req.user = { id: 'unknown', phone, is_admin: true };
-      return next();
+    if (userError) {
+      console.error('❌ [daraja-b2c checkAdmin] failed to verify admin:', userError.message);
+      return res.status(500).json({ success: false, error: 'Failed to verify admin access' });
+    }
+    if (!user) {
+      return res.status(403).json({ success: false, error: 'Admin access required' });
     }
     if (!user.is_admin) {
       return res.status(403).json({ success: false, error: 'Admin access required' });
@@ -37,8 +39,7 @@ async function checkAdmin(req, res, next) {
     next();
   } catch (error) {
     console.error('❌ [daraja-b2c checkAdmin] exception:', error);
-    req.user = { id: 'unknown', phone: req.body?.phone || req.query.phone || 'unknown', is_admin: true };
-    next();
+    return res.status(500).json({ success: false, error: 'Failed to verify admin access' });
   }
 }
 
@@ -49,29 +50,10 @@ function nairobiDayStartIso() {
   return nairobiNow.toISOString();
 }
 
-// POST /api/admin/daraja-b2c/validate-recipient — validate the number before sending
-router.post('/validate-recipient', checkAdmin, async (req, res) => {
-  try {
-    const { recipientPhone } = req.body;
-    if (!recipientPhone) {
-      return res.status(400).json({ success: false, error: 'recipientPhone is required' });
-    }
-    const result = await validateRecipientIdentity({ recipientPhone });
-    return res.json({
-      success: true,
-      ...result,
-      message: 'The phone number is valid. Safaricom returns the registered M-Pesa name in the payout result.',
-    });
-  } catch (error) {
-    console.error('❌ [B2C] Validate recipient error:', error.message);
-    return res.status(500).json({ success: false, error: error.message || 'Failed to validate recipient' });
-  }
-});
-
 // POST /api/admin/daraja-b2c/send — requires body.confirm === true as a deliberate second step
 router.post('/send', checkAdmin, async (req, res) => {
   try {
-    const { recipientPhone, amount, remarks, commandId, confirm, validatedPhone, validatedName } = req.body;
+    const { recipientPhone, amount, remarks, commandId, confirm, adminPin } = req.body;
 
     if (!recipientPhone || !amount) {
       return res.status(400).json({ success: false, error: 'recipientPhone and amount are required' });
@@ -79,8 +61,16 @@ router.post('/send', checkAdmin, async (req, res) => {
     if (confirm !== true) {
       return res.status(400).json({ success: false, error: 'Explicit confirm:true is required to send money' });
     }
-    if (!validatedPhone || normalizeDarajaPhoneNumber(validatedPhone) !== normalizeDarajaPhoneNumber(recipientPhone)) {
-      return res.status(400).json({ success: false, error: 'Validate the recipient number immediately before sending' });
+    if (typeof adminPin !== 'string' || !/^\d{6}$/.test(adminPin)) {
+      return res.status(400).json({ success: false, error: 'A six-digit admin PIN is required' });
+    }
+    const configuredAdminPin = process.env.DARAJA_B2C_ADMIN_PIN;
+    if (!configuredAdminPin || !/^\d{6}$/.test(configuredAdminPin)) {
+      console.error('❌ [B2C] DARAJA_B2C_ADMIN_PIN is not configured as a six-digit PIN');
+      return res.status(503).json({ success: false, error: 'Admin payment PIN is not configured on the server' });
+    }
+    if (!crypto.timingSafeEqual(Buffer.from(adminPin), Buffer.from(configuredAdminPin))) {
+      return res.status(401).json({ success: false, error: 'Incorrect admin PIN' });
     }
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Database not initialized' });
@@ -89,6 +79,9 @@ router.post('/send', checkAdmin, async (req, res) => {
     const roundedAmount = Math.round(parseFloat(amount));
     if (!roundedAmount || roundedAmount <= 0) {
       return res.status(400).json({ success: false, error: 'Invalid amount' });
+    }
+    if (roundedAmount < MIN_SINGLE_AMOUNT) {
+      return res.status(400).json({ success: false, error: `Amount must be at least KSH ${MIN_SINGLE_AMOUNT}` });
     }
     if (roundedAmount > MAX_SINGLE_AMOUNT) {
       return res.status(400).json({ success: false, error: `Amount exceeds per-transaction limit of KSH ${MAX_SINGLE_AMOUNT}` });
@@ -121,7 +114,7 @@ router.post('/send', checkAdmin, async (req, res) => {
       conversation_id: result.conversationId,
       initiated_by_admin_phone: req.user.phone,
       recipient_phone: result.normalizedPhone,
-      recipient_name_validated: validatedName || null,
+      recipient_name_validated: null,
       amount: result.amount,
       command_id: commandId || 'BusinessPayment',
       remarks: remarks || null,
@@ -161,8 +154,9 @@ router.get('/transactions', checkAdmin, async (req, res) => {
 // POST /api/admin/daraja-b2c/balance — triggers an async Account Balance query
 router.post('/balance', checkAdmin, async (req, res) => {
   try {
+    const requestedAt = new Date().toISOString();
     const result = await requestAccountBalanceQuery({ remarks: 'Admin panel balance check' });
-    return res.json({ success: true, ...result, note: 'Balance will arrive asynchronously via callback — poll /balance/latest' });
+    return res.json({ success: true, ...result, requestedAt });
   } catch (error) {
     console.error('❌ [B2C] Balance query error:', error.message);
     return res.status(500).json({ success: false, error: error.message });
@@ -182,10 +176,16 @@ router.get('/balance/latest', checkAdmin, async (req, res) => {
       .maybeSingle();
     if (error) throw error;
     if (!data) {
-      return res.json({ success: true, snapshot: null });
+      return res.json({ success: true, snapshot: null, fresh: false });
     }
     const snapshot = typeof data.setting_value === 'string' ? JSON.parse(data.setting_value) : data.setting_value;
-    return res.json({ success: true, snapshot });
+    const requestedAt = Date.parse(req.query.since || '');
+    const snapshotTime = Date.parse(snapshot?.fetchedAt || '');
+    return res.json({
+      success: true,
+      snapshot,
+      fresh: Number.isFinite(requestedAt) && Number.isFinite(snapshotTime) && snapshotTime >= requestedAt,
+    });
   } catch (error) {
     console.error('❌ [B2C] Latest balance fetch error:', error.message);
     return res.status(500).json({ success: false, error: error.message });

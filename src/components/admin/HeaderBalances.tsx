@@ -7,7 +7,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Wallet, DollarSign, RefreshCw, Send, Loader2, ShieldCheck } from 'lucide-react';
+import { Wallet, DollarSign, RefreshCw, Send, Loader2 } from 'lucide-react';
 
 interface BalanceSnapshot {
   utilityAvailable: number | null;
@@ -28,16 +28,11 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
   const [recipientPhone, setRecipientPhone] = useState('');
   const [amount, setAmount] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [adminPin, setAdminPin] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
   const [sendSuccess, setSendSuccess] = useState('');
-
-  const [validating, setValidating] = useState(false);
-  const [validateError, setValidateError] = useState('');
-  const [validatedPhone, setValidatedPhone] = useState('');
-  const [validatedName, setValidatedName] = useState('');
-
-  const isValidated = !!validatedPhone && validatedPhone === recipientPhone.trim();
+  const [pinError, setPinError] = useState('');
 
   const fetchSmsBalance = async () => {
     if (!adminPhone) return;
@@ -55,15 +50,23 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
     }
   };
 
-  const fetchLatestPaybillBalance = async () => {
+  const fetchLatestPaybillBalance = async (since?: string) => {
+    if (!adminPhone) throw new Error('Admin phone is required to fetch paybill balance');
+    const params = new URLSearchParams({ phone: adminPhone });
+    if (since) params.set('since', since);
+    const response = await fetch(buildApiUrl(`/api/admin/daraja-b2c/balance/latest?${params.toString()}`));
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Failed to load balance');
+    if (data.snapshot) setSnapshot(data.snapshot);
+    return data;
+  };
+
+  const loadLatestPaybillBalance = async () => {
     if (!adminPhone) return;
     setLoadingPaybill(true);
     setPaybillError('');
     try {
-      const response = await fetch(buildApiUrl(`/api/admin/daraja-b2c/balance/latest?phone=${encodeURIComponent(adminPhone)}`));
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.error || 'Failed to load balance');
-      setSnapshot(data.snapshot);
+      await fetchLatestPaybillBalance();
     } catch (error) {
       setPaybillError(error instanceof Error ? error.message : 'Failed to load balance');
     } finally {
@@ -71,15 +74,11 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
     }
   };
 
-  // Load both balances on every mount (i.e. every page refresh), independent of which tab is active
-  useEffect(() => {
-    if (adminPhone) {
-      void fetchSmsBalance();
-      void fetchLatestPaybillBalance();
-    }
-  }, [adminPhone]);
-
   const refreshPaybillBalance = async () => {
+    if (!adminPhone) {
+      setPaybillError('Admin phone is required to fetch paybill balance');
+      return;
+    }
     setLoadingPaybill(true);
     setPaybillError('');
     try {
@@ -90,12 +89,27 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Failed to request balance');
-      setTimeout(() => { void fetchLatestPaybillBalance(); }, 6000);
+
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 5000));
+        const latest = await fetchLatestPaybillBalance(data.requestedAt);
+        if (latest.fresh) return;
+      }
+      throw new Error('Safaricom has not returned the latest paybill balance yet. Try refreshing again shortly.');
     } catch (error) {
       setPaybillError(error instanceof Error ? error.message : 'Failed to request balance');
+    } finally {
       setLoadingPaybill(false);
     }
   };
+
+  // Load both balances on every mount (i.e. every page refresh), independent of which tab is active
+  useEffect(() => {
+    if (adminPhone) {
+      void fetchSmsBalance();
+      void loadLatestPaybillBalance();
+    }
+  }, [adminPhone]);
 
   const handleSendClick = () => {
     setSendError('');
@@ -108,60 +122,39 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
       setSendError('Amount must be a positive number');
       return;
     }
-    if (!isValidated) {
-      setSendError('Validate the recipient before sending');
+    if (Math.round(parseFloat(amount)) < 10) {
+      setSendError('M-Pesa B2C payouts must be at least KSH 10');
       return;
     }
+    setAdminPin('');
+    setPinError('');
     setConfirmOpen(true);
   };
 
-  const validateRecipient = async () => {
-    setValidateError('');
-    setValidatedPhone('');
-    setValidatedName('');
-    if (!recipientPhone.trim()) {
-      setValidateError('Enter a recipient phone number first');
+  const confirmSend = async () => {
+    if (!/^\d{6}$/.test(adminPin)) {
+      setPinError('Enter the six-digit admin PIN');
       return;
     }
-    setValidating(true);
-    try {
-      const response = await fetch(buildApiUrl('/api/admin/daraja-b2c/validate-recipient'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: adminPhone, recipientPhone }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.error || 'Validation failed');
-      setValidatedPhone(recipientPhone.trim());
-      setValidatedName(data.name || '');
-    } catch (error) {
-      setValidateError(error instanceof Error ? error.message : 'Validation failed');
-    } finally {
-      setValidating(false);
-    }
-  };
-
-  const confirmSend = async () => {
-    setConfirmOpen(false);
     setSending(true);
-    setSendError('');
-    setSendSuccess('');
+    setPinError('');
     try {
       const response = await fetch(buildApiUrl('/api/admin/daraja-b2c/send'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: adminPhone, recipientPhone, amount, remarks, confirm: true, validatedPhone, validatedName }),
+        body: JSON.stringify({ phone: adminPhone, recipientPhone, amount, remarks, confirm: true, adminPin }),
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Failed to send payment');
       setSendSuccess(`Payment request accepted (ref: ${data.originatorConversationId})`);
+      setConfirmOpen(false);
       setRecipientPhone('');
       setAmount('');
       setRemarks('');
-      setValidatedPhone('');
-      setValidatedName('');
+      setAdminPin('');
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : 'Failed to send payment');
+      setPinError(error instanceof Error ? error.message : 'Failed to send payment');
+      setAdminPin('');
     } finally {
       setSending(false);
     }
@@ -207,29 +200,14 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
               <Input
                 placeholder="Recipient phone (07XXXXXXXX)"
                 value={recipientPhone}
-                onChange={(e) => {
-                  setRecipientPhone(e.target.value);
-                  setValidatedPhone('');
-                  setValidatedName('');
-                  setValidateError('');
-                }}
+                onChange={(e) => setRecipientPhone(e.target.value)}
               />
-              <Button type="button" variant="outline" onClick={validateRecipient} disabled={validating || !recipientPhone.trim()}>
-                {validating ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                {validating ? 'Checking...' : 'Validate'}
-              </Button>
             </div>
-            {validateError && <p role="alert" className="text-xs text-destructive">{validateError}</p>}
-            {isValidated && (
-              <p className="text-xs text-green-500">
-                Number verified. Safaricom will return the registered M-Pesa name after the payout is processed.
-              </p>
-            )}
-            <Input placeholder="Amount (KSH)" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <Input placeholder="Amount (KSH; minimum 10)" type="number" min={10} value={amount} onChange={(e) => setAmount(e.target.value)} />
             <Input placeholder="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
-            <Button className="w-full" onClick={handleSendClick} disabled={sending || !isValidated}>
+            <Button className="w-full" onClick={handleSendClick} disabled={sending}>
               {sending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Send className="mr-1 h-4 w-4" />}
-              {sending ? 'Sending...' : !isValidated ? 'Validate recipient to send' : 'Send'}
+              {sending ? 'Sending...' : 'Send'}
             </Button>
             {sendError && <p role="alert" className="text-xs text-destructive">{sendError}</p>}
             {sendSuccess && <p className="text-xs text-green-500">{sendSuccess}</p>}
@@ -237,17 +215,44 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <AlertDialog open={confirmOpen} onOpenChange={(open) => {
+        setConfirmOpen(open);
+        if (!open) {
+          setAdminPin('');
+          setPinError('');
+        }
+      }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm payout</AlertDialogTitle>
             <AlertDialogDescription>
-              You are about to send <strong>KSH {amount}</strong> from the paybill to <strong>{recipientPhone}</strong>. The registered M-Pesa name will be shown in the payout result after processing. This moves real money and cannot be undone. Proceed?
+              You are about to send <strong>KSH {amount}</strong> from the paybill to <strong>{recipientPhone}</strong>. Enter the six-digit admin PIN to authorize this real-money payment.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-2">
+            <Input
+              type="password"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              placeholder="6-digit admin PIN"
+              value={adminPin}
+              onChange={(e) => {
+                setAdminPin(e.target.value.replace(/\D/g, '').slice(0, 6));
+                setPinError('');
+              }}
+              aria-label="Six-digit admin PIN"
+            />
+            {pinError && <p role="alert" className="text-xs text-destructive">{pinError}</p>}
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmSend}>Confirm &amp; Send</AlertDialogAction>
+            <AlertDialogAction onClick={(event) => {
+              event.preventDefault();
+              void confirmSend();
+            }} disabled={sending || adminPin.length !== 6}>
+              {sending ? 'Sending...' : 'Confirm & Send'}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
