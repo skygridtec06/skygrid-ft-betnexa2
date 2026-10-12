@@ -22,7 +22,7 @@ const {
   registerAdminDarajaTestAttempt,
   ensureAdminDarajaTestFunding,
 } = require('../services/adminDarajaTestFundingService');
-const { sendSms, sendActivationSms, sendWithdrawalSms, sendBetWonSms, sendBanSms, sendDepositSms, sendAdminDepositNotification, sendUserBalanceUpdateSms } = require('../services/smsService.js');
+const { sendSms, sendActivationSms, sendWithdrawalSms, sendBetWonSms, sendBanSms, sendDepositSms, sendAdminDepositNotification, sendUserBalanceUpdateSms, getSmsBalance } = require('../services/smsService.js');
 
 const router = express.Router();
 
@@ -4342,6 +4342,19 @@ router.get('/payments', checkAdmin, async (req, res) => {
 });
 
 // GET: Fetch C2B payments that could not be matched to a BETNEXA ID or phone
+router.get('/sms-balance', checkAdmin, async (req, res) => {
+  try {
+    const result = await getSmsBalance();
+    if (!result.success) {
+      return res.status(502).json({ success: false, error: result.error || 'Failed to fetch SMS balance', raw: result.raw });
+    }
+    return res.json({ success: true, balance: result.balance });
+  } catch (error) {
+    console.error('❌ SMS balance fetch error:', error.message);
+    return res.status(500).json({ success: false, error: 'Failed to fetch SMS balance' });
+  }
+});
+
 router.get('/c2b-mismatches', checkAdmin, async (req, res) => {
   try {
     const [mismatchResult, legacyResult] = await Promise.all([

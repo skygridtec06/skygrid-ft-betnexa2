@@ -11,6 +11,7 @@ const https = require('https');
 
 const TEXTSMS_ENDPOINT_HOSTNAME = 'sms.textsms.co.ke';
 const TEXTSMS_ENDPOINT_PATH = '/api/services/sendsms/';
+const TEXTSMS_BALANCE_PATH = '/api/services/getbalance/';
 
 /**
  * Normalize a Kenyan phone number to 254XXXXXXXXX format.
@@ -29,12 +30,12 @@ function normalizePhone(phone) {
  * Low-level HTTPS request to the TextSMS API.
  * Returns the parsed response object, or null on network error.
  */
-function postToTextSmsApi(payload) {
+function postToTextSmsApi(payload, path = TEXTSMS_ENDPOINT_PATH) {
   return new Promise((resolve) => {
     const bodyData = JSON.stringify(payload);
     const options = {
       hostname: TEXTSMS_ENDPOINT_HOSTNAME,
-      path: TEXTSMS_ENDPOINT_PATH,
+      path,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -42,8 +43,8 @@ function postToTextSmsApi(payload) {
       },
     };
 
-    console.log(`[SMS_DEBUG] Sending request to ${TEXTSMS_ENDPOINT_HOSTNAME}${TEXTSMS_ENDPOINT_PATH}`);
-    console.log(`[SMS_DEBUG] Payload: mobile=${payload.mobile}, message length=${payload.message.length}`);
+    console.log(`[SMS_DEBUG] Sending request to ${TEXTSMS_ENDPOINT_HOSTNAME}${path}`);
+    console.log(`[SMS_DEBUG] Payload keys: ${Object.keys(payload).join(', ')}`);
 
     const req = https.request(options, (res) => {
       console.log(`[SMS_DEBUG] Response status code: ${res.statusCode}`);
@@ -360,6 +361,51 @@ async function sendAdminDepositNotification(userPhone, username, amount, transac
   }
 }
 
+/**
+ * Fetch the remaining SMS unit/credit balance from the TextSMS dashboard account.
+ * @returns {Promise<{ success: boolean, balance?: number, raw?: any, error?: string }>}
+ */
+async function getSmsBalance() {
+  const apiKey = (process.env.TEXTSMS_API_KEY || '').trim();
+  const partnerId = (process.env.TEXTSMS_PARTNER_ID || '').trim();
+
+  if (!apiKey || !partnerId) {
+    return { success: false, error: 'TEXTSMS_API_KEY or TEXTSMS_PARTNER_ID not set' };
+  }
+
+  const payload = {
+    apikey: apiKey,
+    partnerID: String(partnerId),
+  };
+
+  const result = await postToTextSmsApi(payload, TEXTSMS_BALANCE_PATH);
+
+  if (!result) {
+    return { success: false, error: 'No response from TextSMS API' };
+  }
+
+  if (result.parseError) {
+    return { success: false, error: 'Failed to parse TextSMS API response', raw: result.raw };
+  }
+
+  // The exact field name isn't documented; probe the likely candidates,
+  // checking both the top level and a possible `responses[0]` wrapper.
+  const candidateSources = [result, ...(Array.isArray(result.responses) ? result.responses : [])];
+  const candidateKeys = ['balance', 'credit', 'credits', 'creditBalance', 'credit_balance', 'sms_balance', 'smsBalance'];
+
+  for (const source of candidateSources) {
+    if (!source || typeof source !== 'object') continue;
+    for (const key of candidateKeys) {
+      if (source[key] !== undefined && source[key] !== null && !isNaN(Number(source[key]))) {
+        return { success: true, balance: Number(source[key]), raw: result };
+      }
+    }
+  }
+
+  console.warn('[SMS] getSmsBalance: no recognizable balance field in response:', JSON.stringify(result).substring(0, 300));
+  return { success: false, error: 'Balance field not found in TextSMS response', raw: result };
+}
+
 module.exports = {
   sendSms,
   sendWelcomeSms,
@@ -372,4 +418,5 @@ module.exports = {
   sendInactivityReminderSms,
   sendBanSms,
   sendAdminDepositNotification,
+  getSmsBalance,
 };

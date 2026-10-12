@@ -3,7 +3,7 @@ import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Trash2, CheckCircle, XCircle, Clock, DollarSign, Users, UserPlus, BarChart3, Trophy, Settings, RefreshCw, Edit2, Save, ArrowDown, ArrowUp, Play, Pause, Square, Lock, Unlock, Shield, Zap, Upload, Image as ImageIcon, Loader2, Megaphone, Calendar, Download, Ban, Flame, AlertCircle } from "lucide-react";
+import { Plus, Trash2, CheckCircle, XCircle, Clock, DollarSign, Users, UserPlus, BarChart3, Trophy, Settings, RefreshCw, Edit2, Save, ArrowDown, ArrowUp, Play, Pause, Square, Lock, Unlock, Shield, Zap, Upload, Image as ImageIcon, Loader2, Megaphone, Calendar, Download, Ban, Flame, AlertCircle, Wallet, PieChart } from "lucide-react";
 import { type MatchMarkets } from "@/components/MatchCard";
 import { useMatches } from "@/context/MatchContext";
 import { useBets, type PlacedBet } from "@/context/BetContext";
@@ -20,6 +20,7 @@ import { formatDateInEAT, formatTransactionDateInEAT, formatTimeInEAT } from "@/
 import { MatchEventEditor } from "@/components/MatchEventEditor";
 import { ActiveMembers } from "@/components/ActiveMembers";
 import { FetchGamesFetchModal } from "@/components/FetchGamesFetchModal";
+import { StatisticsDashboard } from "@/components/admin/StatisticsDashboard";
 import { EarningsCalculator } from "@/components/EarningsCalculator";
 import { buildApiUrl } from "@/lib/api";
 
@@ -368,7 +369,7 @@ const AdminPortal = () => {
     const fetchServerBetFlags = async () => {
       try {
         const apiUrl = import.meta.env.VITE_API_URL || 'https://www.betnexabackend.co.ke';
-        const adminPhone = localStorage.getItem("adminPhone") || localStorage.getItem("userPhone") || "0712345678";
+        const adminPhone = loggedInUser?.phone || localStorage.getItem("adminPhone") || localStorage.getItem("userPhone") || "0712345678";
         const smsResp = await fetch(`${apiUrl}/api/admin/bets/sms-triggered?phone=${adminPhone}`);
         const smsData = await smsResp.json();
         if (smsData.success && smsData.smsTriggeredBetIds) {
@@ -408,6 +409,9 @@ const AdminPortal = () => {
   const [c2bResolvingMismatchId, setC2bResolvingMismatchId] = useState<string | null>(null);
   const [c2bResolutionMessages, setC2bResolutionMessages] = useState<Record<string, string>>({});
   const [activationFees, setActivationFees] = useState<any[]>([]);
+  const [smsBalance, setSmsBalance] = useState<number | null>(null);
+  const [loadingSmsBalance, setLoadingSmsBalance] = useState(false);
+  const [smsBalanceError, setSmsBalanceError] = useState("");
   
   // User balance editing state
   const [editingBalance, setEditingBalance] = useState<string | null>(null);
@@ -2411,6 +2415,29 @@ const AdminPortal = () => {
     }
   };
 
+  const fetchSmsBalance = async () => {
+    const phone = loggedInUser?.phone || '';
+    if (!phone) {
+      setSmsBalanceError("User phone not available");
+      return;
+    }
+    setLoadingSmsBalance(true);
+    setSmsBalanceError("");
+    try {
+      const response = await fetch(buildApiUrl(`/api/admin/sms-balance?phone=${encodeURIComponent(phone)}`));
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to load SMS balance');
+      }
+      setSmsBalance(typeof data.balance === 'number' ? data.balance : null);
+    } catch (error) {
+      console.error("Failed to fetch SMS balance:", error);
+      setSmsBalanceError(error instanceof Error ? error.message : 'Failed to load SMS balance');
+    } finally {
+      setLoadingSmsBalance(false);
+    }
+  };
+
   const searchC2bRecipients = async (mismatchId: string) => {
     const query = (c2bUserQueries[mismatchId] || "").trim();
     if (query.length < 2) {
@@ -2533,6 +2560,11 @@ const AdminPortal = () => {
     if (tab === "c2b" && !loadedAdminTabsRef.current.has(tab)) {
       loadedAdminTabsRef.current.add(tab);
       void fetchC2bMismatches();
+    }
+
+    if (tab === "balances" && !loadedAdminTabsRef.current.has(tab)) {
+      loadedAdminTabsRef.current.add(tab);
+      void fetchSmsBalance();
     }
 
     if (tab === "bets" && !loadedAdminTabsRef.current.has(tab)) {
@@ -2999,7 +3031,7 @@ const AdminPortal = () => {
         </div>
 
         <Tabs value={adminTab} onValueChange={handleTabChange}>
-          <TabsList className="mb-6 bg-secondary grid w-full grid-cols-6">
+          <TabsList className="mb-6 bg-secondary grid w-full grid-cols-8">
             <TabsTrigger value="games" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Trophy className="mr-1 h-4 w-4" /> Games
             </TabsTrigger>
@@ -3014,6 +3046,12 @@ const AdminPortal = () => {
             </TabsTrigger>
             <TabsTrigger value="c2b" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <AlertCircle className="mr-1 h-4 w-4" /> C2B
+            </TabsTrigger>
+            <TabsTrigger value="balances" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Wallet className="mr-1 h-4 w-4" /> Balances
+            </TabsTrigger>
+            <TabsTrigger value="statistics" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <PieChart className="mr-1 h-4 w-4" /> Statistics
             </TabsTrigger>
             <TabsTrigger value="bets" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Trophy className="mr-1 h-4 w-4" /> Bets
@@ -5393,6 +5431,44 @@ const AdminPortal = () => {
             )}
           </TabsContent>
 
+          <TabsContent value="balances" className="space-y-6">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="font-display text-sm font-bold uppercase tracking-wider text-foreground">Service Balances</h3>
+              <Button variant="outline" size="sm" onClick={fetchSmsBalance} disabled={loadingSmsBalance}>
+                <RefreshCw className={`mr-1 h-4 w-4 ${loadingSmsBalance ? "animate-spin" : ""}`} />
+                {loadingSmsBalance ? "Refreshing..." : "Refresh"}
+              </Button>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card className="border-border bg-card p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">TextSMS Units Remaining</p>
+                  <Wallet className="h-5 w-5 text-primary opacity-60" />
+                </div>
+                {loadingSmsBalance ? (
+                  <p className="mt-2 text-sm text-muted-foreground">Loading...</p>
+                ) : smsBalanceError ? (
+                  <p role="alert" className="mt-2 text-xs text-destructive">{smsBalanceError}</p>
+                ) : (
+                  <p className="mt-2 text-2xl font-bold text-foreground">{smsBalance !== null ? smsBalance.toLocaleString() : "—"}</p>
+                )}
+                <p className="mt-1 text-xs text-muted-foreground">TextSMS Kenya SMS credit balance.</p>
+              </Card>
+              <Card className="border-border bg-card p-4 opacity-60">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">M-Pesa Paybill Balance</p>
+                  <DollarSign className="h-5 w-5 text-muted-foreground opacity-60" />
+                </div>
+                <p className="mt-2 text-2xl font-bold text-muted-foreground">Not configured</p>
+                <p className="mt-1 text-xs text-muted-foreground">Requires Daraja Initiator credentials — not set up yet.</p>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="statistics" className="space-y-6">
+            <StatisticsDashboard adminPhone={loggedInUser?.phone || ""} />
+          </TabsContent>
+
           <TabsContent value="bets" className="space-y-6">
             <div className="mb-4">
               <h3 className="font-display text-sm font-bold uppercase tracking-wider text-foreground">Manage Bets</h3>
@@ -5976,6 +6052,7 @@ const AdminPortal = () => {
         <FetchGamesFetchModal
           isOpen={showFetchGamesModal}
           onClose={() => setShowFetchGamesModal(false)}
+          adminPhone={loggedInUser?.phone || ""}
           onExecute={async (games) => {
             const batchSize = 50;
             let addedCount = 0;

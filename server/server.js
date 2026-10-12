@@ -14,6 +14,7 @@ const PaymentRoutes = require('./routes/payment.routes.js');
 const CallbackRoutes = require('./routes/callback.routes.js');
 const AuthRoutes = require('./routes/auth.routes.js');
 const AdminRoutes = require('./routes/admin.routes.js');
+const AdminStatisticsRoutes = require('./routes/admin-statistics.routes.js');
 const FetchApiFootballRoutes = require('./routes/fetch-api-football-games.js');
 const BetsRoutes = require('./routes/bets.routes.js');
 const LiveRoutes = require('./routes/live.routes.js');
@@ -157,6 +158,7 @@ app.use('/api/auth', AuthRoutes);
 app.use('/api/payments', PaymentRoutes);
 app.use('/api/callbacks', CallbackRoutes);
 app.use('/api/admin/fetch-api-football', FetchApiFootballRoutes);  // Mount specific routes BEFORE general /api/admin
+app.use('/api/admin/statistics', AdminStatisticsRoutes);  // Mount specific routes BEFORE general /api/admin
 app.use('/api/admin', AdminRoutes);
 app.use('/api/bets', BetsRoutes);
 app.use('/api/live', LiveRoutes);

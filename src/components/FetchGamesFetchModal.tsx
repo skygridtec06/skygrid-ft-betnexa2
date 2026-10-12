@@ -22,6 +22,7 @@ interface FetchGamesFetchModalProps {
   isOpen: boolean;
   onClose: () => void;
   onExecute: (games: GamePreview[]) => Promise<void>;
+  adminPhone: string;
 }
 
 const getDefaultDateRange = () => {
@@ -34,7 +35,7 @@ const getDefaultDateRange = () => {
   };
 };
 
-export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesFetchModalProps) => {
+export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute, adminPhone }: FetchGamesFetchModalProps) => {
   const [step, setStep] = useState<'idle' | 'fetching' | 'preview' | 'executing' | 'complete' | 'error'>('idle');
   const [games, setGames] = useState<GamePreview[]>([]);
   const [errorMsg, setErrorMsg] = useState('');
@@ -52,8 +53,6 @@ export const FetchGamesFetchModal = ({ isOpen, onClose, onExecute }: FetchGamesF
     setErrorMsg('');
     setOddsWarnings([]);
     try {
-      const adminPhone = localStorage.getItem("adminPhone") || localStorage.getItem("userPhone") || "0712345678";
-      
       const response = await fetch(buildApiUrl('/api/admin/fetch-api-football/fetch-preview'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
