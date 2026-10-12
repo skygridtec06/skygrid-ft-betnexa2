@@ -21,6 +21,7 @@ import { MatchEventEditor } from "@/components/MatchEventEditor";
 import { ActiveMembers } from "@/components/ActiveMembers";
 import { FetchGamesFetchModal } from "@/components/FetchGamesFetchModal";
 import { StatisticsDashboard } from "@/components/admin/StatisticsDashboard";
+import { B2CPaybillPanel } from "@/components/admin/B2CPaybillPanel";
 import { EarningsCalculator } from "@/components/EarningsCalculator";
 import { buildApiUrl } from "@/lib/api";
 
@@ -5464,14 +5465,7 @@ const AdminPortal = () => {
                 )}
                 <p className="mt-1 text-xs text-muted-foreground">TextSMS Kenya SMS credit balance.</p>
               </Card>
-              <Card className="border-border bg-card p-4 opacity-60">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">M-Pesa Paybill Balance</p>
-                  <DollarSign className="h-5 w-5 text-muted-foreground opacity-60" />
-                </div>
-                <p className="mt-2 text-2xl font-bold text-muted-foreground">Not configured</p>
-                <p className="mt-1 text-xs text-muted-foreground">Requires Daraja Initiator credentials — not set up yet.</p>
-              </Card>
+              <B2CPaybillPanel adminPhone={loggedInUser?.phone || ""} />
             </div>
           </TabsContent>
 

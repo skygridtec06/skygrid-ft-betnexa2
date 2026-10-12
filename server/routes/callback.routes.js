@@ -165,6 +165,98 @@ router.post('/daraja-user', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// B2C (SEND MONEY) + ACCOUNT BALANCE CALLBACKS
+// ─────────────────────────────────────────────────────────────────
+
+router.post('/b2c/timeout', async (req, res) => {
+  console.warn('⌛ [B2C] Queue timeout callback:', JSON.stringify(req.body));
+  res.json({ ResponseCode: '00000000', ResponseDesc: 'Accepted' });
+  try {
+    const originatorConversationId = req.body?.Result?.OriginatorConversationID;
+    if (originatorConversationId && supabase) {
+      await supabase
+        .from('b2c_transactions')
+        .update({ status: 'failed', result_description: 'Timed out', completed_at: new Date().toISOString() })
+        .eq('originator_conversation_id', originatorConversationId);
+    }
+  } catch (error) {
+    console.error('❌ [B2C] Timeout handling error:', error.message);
+  }
+});
+
+router.post('/b2c/result', async (req, res) => {
+  console.log('🔔 [B2C] Result callback:', JSON.stringify(req.body));
+  res.json({ ResponseCode: '00000000', ResponseDesc: 'Accepted' });
+  try {
+    const result = req.body?.Result;
+    if (!result || !supabase) return;
+
+    const originatorConversationId = result.OriginatorConversationID;
+    const resultCode = result.ResultCode;
+    const resultParams = result.ResultParameters?.ResultParameter || [];
+    const getParam = (key) => resultParams.find((p) => p.Key === key)?.Value;
+
+    await supabase
+      .from('b2c_transactions')
+      .update({
+        status: `${resultCode}` === '0' ? 'completed' : 'failed',
+        result_code: `${resultCode}`,
+        result_description: result.ResultDesc,
+        mpesa_transaction_id: result.TransactionID || getParam('TransactionReceipt') || null,
+        completed_at: new Date().toISOString(),
+      })
+      .eq('originator_conversation_id', originatorConversationId);
+  } catch (error) {
+    console.error('❌ [B2C] Result handling error:', error.message);
+  }
+});
+
+router.post('/accountbalance/timeout', (req, res) => {
+  console.warn('⌛ [AccountBalance] Queue timeout callback:', JSON.stringify(req.body));
+  res.json({ ResponseCode: '00000000', ResponseDesc: 'Accepted' });
+});
+
+router.post('/accountbalance/result', async (req, res) => {
+  console.log('🔔 [AccountBalance] Result callback:', JSON.stringify(req.body));
+  res.json({ ResponseCode: '00000000', ResponseDesc: 'Accepted' });
+  try {
+    const result = req.body?.Result;
+    if (!result || !supabase) return;
+    if (`${result.ResultCode}` !== '0') {
+      console.warn('⚠️ [AccountBalance] Query failed:', result.ResultDesc);
+      return;
+    }
+
+    const resultParams = result.ResultParameters?.ResultParameter || [];
+    const rawBalances = resultParams.find((p) => p.Key === 'AccountBalance')?.Value || '';
+
+    // Format: "Working Account|KES|700000.00|700000.00|0.00|0.00&Utility Account|KES|228037.00|..."
+    const accounts = {};
+    rawBalances.split('&').forEach((entry) => {
+      const parts = entry.split('|');
+      if (parts.length >= 3) {
+        accounts[parts[0].trim()] = {
+          currency: parts[1],
+          available: parseFloat(parts[2]) || 0,
+        };
+      }
+    });
+
+    const snapshot = {
+      accounts,
+      utilityAvailable: accounts['Utility Account']?.available ?? null,
+      fetchedAt: new Date().toISOString(),
+    };
+
+    await supabase
+      .from('settings')
+      .upsert({ setting_key: 'mpesa_paybill_balance_snapshot', setting_value: JSON.stringify(snapshot), data_type: 'json' }, { onConflict: 'setting_key' });
+  } catch (error) {
+    console.error('❌ [AccountBalance] Result handling error:', error.message);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // C2B (CUSTOMER TO BUSINESS) OFFLINE PAYMENT CALLBACKS
 // ─────────────────────────────────────────────────────────────────
 
