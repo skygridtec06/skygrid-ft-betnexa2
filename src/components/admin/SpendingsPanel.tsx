@@ -7,11 +7,13 @@ import { RefreshCw } from 'lucide-react';
 interface B2CTransaction {
   id: string;
   recipient_phone: string;
+  recipient_name_validated: string | null;
+  recipient_mpesa_name: string | null;
+  mpesa_transaction_id: string | null;
   amount: number;
   status: string;
   remarks: string | null;
   initiated_by_admin_phone: string;
-  mpesa_transaction_id: string | null;
   created_at: string;
 }
 
@@ -70,6 +72,10 @@ export const SpendingsPanel = ({ adminPhone }: { adminPhone: string }) => {
               <div key={tx.id} className="flex items-center justify-between border-b border-border/50 pb-2 text-xs last:border-0 last:pb-0">
                 <div>
                   <p className="font-semibold text-foreground">{tx.recipient_phone} — KSH {Number(tx.amount).toLocaleString()}</p>
+                  <p className="text-muted-foreground">
+                    M-Pesa name: {tx.recipient_mpesa_name || tx.recipient_name_validated || 'Pending'}
+                    {tx.mpesa_transaction_id ? ` · Receipt: ${tx.mpesa_transaction_id}` : ''}
+                  </p>
                   <p className="text-muted-foreground">
                     {new Date(tx.created_at).toLocaleString()} · by {tx.initiated_by_admin_phone}
                     {tx.remarks ? ` · ${tx.remarks}` : ''}

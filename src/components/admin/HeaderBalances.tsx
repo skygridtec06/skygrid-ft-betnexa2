@@ -7,7 +7,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Wallet, DollarSign, RefreshCw, Send, Loader2 } from 'lucide-react';
+import { Wallet, DollarSign, RefreshCw, Send, Loader2, ShieldCheck } from 'lucide-react';
 
 interface BalanceSnapshot {
   utilityAvailable: number | null;
@@ -31,6 +31,13 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
   const [sendSuccess, setSendSuccess] = useState('');
+
+  const [validating, setValidating] = useState(false);
+  const [validateError, setValidateError] = useState('');
+  const [validatedPhone, setValidatedPhone] = useState('');
+  const [validatedName, setValidatedName] = useState('');
+
+  const isValidated = !!validatedPhone && validatedPhone === recipientPhone.trim();
 
   const fetchSmsBalance = async () => {
     if (!adminPhone) return;
@@ -101,7 +108,37 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
       setSendError('Amount must be a positive number');
       return;
     }
+    if (!isValidated) {
+      setSendError('Validate the recipient before sending');
+      return;
+    }
     setConfirmOpen(true);
+  };
+
+  const validateRecipient = async () => {
+    setValidateError('');
+    setValidatedPhone('');
+    setValidatedName('');
+    if (!recipientPhone.trim()) {
+      setValidateError('Enter a recipient phone number first');
+      return;
+    }
+    setValidating(true);
+    try {
+      const response = await fetch(buildApiUrl('/api/admin/daraja-b2c/validate-recipient'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: adminPhone, recipientPhone }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Validation failed');
+      setValidatedPhone(recipientPhone.trim());
+      setValidatedName(data.name || 'Name unavailable');
+    } catch (error) {
+      setValidateError(error instanceof Error ? error.message : 'Validation failed');
+    } finally {
+      setValidating(false);
+    }
   };
 
   const confirmSend = async () => {
@@ -113,7 +150,7 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
       const response = await fetch(buildApiUrl('/api/admin/daraja-b2c/send'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: adminPhone, recipientPhone, amount, remarks, confirm: true }),
+        body: JSON.stringify({ phone: adminPhone, recipientPhone, amount, remarks, confirm: true, validatedPhone, validatedName }),
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Failed to send payment');
@@ -121,6 +158,8 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
       setRecipientPhone('');
       setAmount('');
       setRemarks('');
+      setValidatedPhone('');
+      setValidatedName('');
     } catch (error) {
       setSendError(error instanceof Error ? error.message : 'Failed to send payment');
     } finally {
@@ -164,12 +203,31 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
             <DialogDescription>Sends real money from the paybill to the recipient's M-Pesa number.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <Input placeholder="Recipient phone (07XXXXXXXX)" value={recipientPhone} onChange={(e) => setRecipientPhone(e.target.value)} />
+            <div className="flex gap-2">
+              <Input
+                placeholder="Recipient phone (07XXXXXXXX)"
+                value={recipientPhone}
+                onChange={(e) => {
+                  setRecipientPhone(e.target.value);
+                  setValidatedPhone('');
+                  setValidatedName('');
+                  setValidateError('');
+                }}
+              />
+              <Button type="button" variant="outline" onClick={validateRecipient} disabled={validating || !recipientPhone.trim()}>
+                {validating ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                {validating ? 'Checking...' : 'Validate'}
+              </Button>
+            </div>
+            {validateError && <p role="alert" className="text-xs text-destructive">{validateError}</p>}
+            {isValidated && (
+              <p className="text-xs text-green-500">Verified recipient: <strong>{validatedName}</strong></p>
+            )}
             <Input placeholder="Amount (KSH)" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} />
             <Input placeholder="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
-            <Button className="w-full" onClick={handleSendClick} disabled={sending}>
+            <Button className="w-full" onClick={handleSendClick} disabled={sending || !isValidated}>
               {sending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Send className="mr-1 h-4 w-4" />}
-              {sending ? 'Sending...' : 'Send'}
+              {sending ? 'Sending...' : !isValidated ? 'Validate recipient to send' : 'Send'}
             </Button>
             {sendError && <p role="alert" className="text-xs text-destructive">{sendError}</p>}
             {sendSuccess && <p className="text-xs text-green-500">{sendSuccess}</p>}
@@ -182,7 +240,7 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm payout</AlertDialogTitle>
             <AlertDialogDescription>
-              You are about to send <strong>KSH {amount}</strong> from the paybill to <strong>{recipientPhone}</strong>. This moves real money and cannot be undone. Proceed?
+              You are about to send <strong>KSH {amount}</strong> from the paybill to <strong>{validatedName}</strong> ({recipientPhone}). This moves real money and cannot be undone. Proceed?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

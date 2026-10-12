@@ -203,6 +203,7 @@ router.post('/b2c/result', async (req, res) => {
         result_code: `${resultCode}`,
         result_description: result.ResultDesc,
         mpesa_transaction_id: result.TransactionID || getParam('TransactionReceipt') || null,
+        recipient_mpesa_name: getParam('ReceiverPartyPublicName') || null,
         completed_at: new Date().toISOString(),
       })
       .eq('originator_conversation_id', originatorConversationId);

@@ -7,7 +7,8 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../services/database');
-const { sendB2CPayment, requestAccountBalanceQuery, MAX_SINGLE_AMOUNT, MAX_DAILY_AMOUNT } = require('../services/darajaB2CService');
+const { sendB2CPayment, requestAccountBalanceQuery, validateRecipientIdentity, MAX_SINGLE_AMOUNT, MAX_DAILY_AMOUNT } = require('../services/darajaB2CService');
+const { normalizeDarajaPhoneNumber } = require('../services/darajaTestService');
 
 // Mirrors the checkAdmin pattern used across the other admin route files
 async function checkAdmin(req, res, next) {
@@ -48,16 +49,34 @@ function nairobiDayStartIso() {
   return nairobiNow.toISOString();
 }
 
+// POST /api/admin/daraja-b2c/validate-recipient — B2C Hakikisha identity check before sending
+router.post('/validate-recipient', checkAdmin, async (req, res) => {
+  try {
+    const { recipientPhone } = req.body;
+    if (!recipientPhone) {
+      return res.status(400).json({ success: false, error: 'recipientPhone is required' });
+    }
+    const result = await validateRecipientIdentity({ recipientPhone });
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('❌ [B2C] Validate recipient error:', error.message);
+    return res.status(500).json({ success: false, error: error.message || 'Failed to validate recipient' });
+  }
+});
+
 // POST /api/admin/daraja-b2c/send — requires body.confirm === true as a deliberate second step
 router.post('/send', checkAdmin, async (req, res) => {
   try {
-    const { recipientPhone, amount, remarks, commandId, confirm } = req.body;
+    const { recipientPhone, amount, remarks, commandId, confirm, validatedPhone, validatedName } = req.body;
 
     if (!recipientPhone || !amount) {
       return res.status(400).json({ success: false, error: 'recipientPhone and amount are required' });
     }
     if (confirm !== true) {
       return res.status(400).json({ success: false, error: 'Explicit confirm:true is required to send money' });
+    }
+    if (!validatedPhone || normalizeDarajaPhoneNumber(validatedPhone) !== normalizeDarajaPhoneNumber(recipientPhone)) {
+      return res.status(400).json({ success: false, error: 'Recipient must be validated (Hakikisha) immediately before sending' });
     }
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Database not initialized' });
@@ -98,6 +117,7 @@ router.post('/send', checkAdmin, async (req, res) => {
       conversation_id: result.conversationId,
       initiated_by_admin_phone: req.user.phone,
       recipient_phone: result.normalizedPhone,
+      recipient_name_validated: validatedName || null,
       amount: result.amount,
       command_id: commandId || 'BusinessPayment',
       remarks: remarks || null,

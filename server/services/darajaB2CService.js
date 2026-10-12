@@ -170,9 +170,45 @@ async function requestAccountBalanceQuery({ remarks } = {}) {
   };
 }
 
+/**
+ * B2C Hakikisha — synchronous identity check, returns a (partially masked) recipient name
+ * so the admin can confirm the right person before sending money.
+ */
+async function validateRecipientIdentity({ recipientPhone }) {
+  const config = getB2CConfig();
+  const normalizedPhone = normalizeDarajaPhoneNumber(recipientPhone);
+
+  const payload = {
+    header: {
+      requestID: crypto.randomUUID(),
+      timestamp: Math.floor(Date.now() / 1000).toString(),
+    },
+    body: {
+      msisdn: normalizedPhone,
+      shortcode: config.shortCode,
+    },
+  };
+
+  const accessToken = await getAccessToken();
+  const response = await performJsonRequest(
+    { method: 'POST', path: '/mpesa/b2c/hakikisha/v1/hakikisha', headers: { Authorization: `Bearer ${accessToken}` } },
+    payload
+  );
+
+  if (`${response.header?.status || ''}` !== '200') {
+    throw new Error(response.body?.message || response.header?.message || 'Identity validation failed');
+  }
+
+  const { firstName, middleName, lastName } = response.body || {};
+  const name = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
+
+  return { normalizedPhone, name };
+}
+
 module.exports = {
   sendB2CPayment,
   requestAccountBalanceQuery,
+  validateRecipientIdentity,
   getB2CConfig,
   MAX_SINGLE_AMOUNT,
   MAX_DAILY_AMOUNT,
