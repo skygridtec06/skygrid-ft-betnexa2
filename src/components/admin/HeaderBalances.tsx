@@ -190,7 +190,7 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
             <Send className="mr-1 h-4 w-4" /> Send Money
           </Button>
         </DialogTrigger>
-        <DialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:p-6">
+        <DialogContent className="w-[calc(100vw_-_2rem)] max-w-md max-h-[calc(100dvh_-_2rem)] overflow-y-auto p-4 sm:p-6">
           <DialogHeader className="text-center sm:text-left">
             <DialogTitle>Send Money (B2C Payout)</DialogTitle>
             <DialogDescription>Sends real money from the paybill to the recipient's M-Pesa number.</DialogDescription>
@@ -222,7 +222,7 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
           setPinError('');
         }
       }}>
-        <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:p-6">
+        <AlertDialogContent className="w-[calc(100vw_-_2rem)] max-w-md max-h-[calc(100dvh_-_2rem)] overflow-y-auto p-4 sm:p-6">
           <AlertDialogHeader className="text-center sm:text-left">
             <AlertDialogTitle>Confirm payout</AlertDialogTitle>
             <AlertDialogDescription>
