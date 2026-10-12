@@ -202,15 +202,13 @@ export const StatisticsDashboard = ({ adminPhone }: StatisticsDashboardProps) =>
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="border-border bg-card p-4">
           <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">User Base Composition</p>
-          <ResponsiveContainer width="100%" height={250}>
+          <ResponsiveContainer width="100%" height={190}>
             <PieChart>
               <Pie
                 data={dailyFunnel.pies.signupComposition}
                 cx="50%"
                 cy="50%"
-                labelLine={false}
-                label={({ name, value }) => `${name}: ${value}`}
-                outerRadius={80}
+                outerRadius={70}
                 fill="#2a78d6"
                 dataKey="value"
               >
@@ -221,19 +219,25 @@ export const StatisticsDashboard = ({ adminPhone }: StatisticsDashboardProps) =>
               <Tooltip />
             </PieChart>
           </ResponsiveContainer>
+          <div className="grid gap-2">
+            {dailyFunnel.pies.signupComposition.map((item: any, idx: number) => (
+              <div key={`signup-composition-label-${idx}`} className="flex min-w-0 items-start gap-2 text-sm">
+                <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: COLORS_CATEGORICAL[idx % COLORS_CATEGORICAL.length] }} />
+                <span className="min-w-0 break-words text-foreground">{item.name}: {Number(item.value).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
         </Card>
 
         <Card className="border-border bg-card p-4">
           <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total Users → Staked ({clients.totalUsers})</p>
-          <ResponsiveContainer width="100%" height={250}>
+          <ResponsiveContainer width="100%" height={190}>
             <PieChart>
               <Pie
                 data={dailyFunnel.pies.signupToStaked}
                 cx="50%"
                 cy="50%"
-                labelLine={false}
-                label={({ name, value }) => `${name}: ${value}`}
-                outerRadius={80}
+                outerRadius={70}
                 fill="#eb6834"
                 dataKey="value"
               >
@@ -244,19 +248,25 @@ export const StatisticsDashboard = ({ adminPhone }: StatisticsDashboardProps) =>
               <Tooltip />
             </PieChart>
           </ResponsiveContainer>
+          <div className="grid gap-2">
+            {dailyFunnel.pies.signupToStaked.map((item: any, idx: number) => (
+              <div key={`signup-staked-label-${idx}`} className="flex min-w-0 items-start gap-2 text-sm">
+                <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: COLORS_CATEGORICAL[(idx + 1) % COLORS_CATEGORICAL.length] }} />
+                <span className="min-w-0 break-words text-foreground">{item.name}: {Number(item.value).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
         </Card>
 
         <Card className="border-border bg-card p-4">
           <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total Users → Activated ({clients.totalUsers})</p>
-          <ResponsiveContainer width="100%" height={250}>
+          <ResponsiveContainer width="100%" height={190}>
             <PieChart>
               <Pie
                 data={dailyFunnel.pies.signupToActivated}
                 cx="50%"
                 cy="50%"
-                labelLine={false}
-                label={({ name, value }) => `${name}: ${value}`}
-                outerRadius={80}
+                outerRadius={70}
                 fill="#1baf7a"
                 dataKey="value"
               >
@@ -267,6 +277,14 @@ export const StatisticsDashboard = ({ adminPhone }: StatisticsDashboardProps) =>
               <Tooltip />
             </PieChart>
           </ResponsiveContainer>
+          <div className="grid gap-2">
+            {dailyFunnel.pies.signupToActivated.map((item: any, idx: number) => (
+              <div key={`signup-activated-label-${idx}`} className="flex min-w-0 items-start gap-2 text-sm">
+                <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: COLORS_CATEGORICAL[(idx + 2) % COLORS_CATEGORICAL.length] }} />
+                <span className="min-w-0 break-words text-foreground">{item.name}: {Number(item.value).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
         </Card>
       </div>
 
