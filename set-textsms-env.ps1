@@ -1,7 +1,10 @@
 # Set TextSMS environment variables in Vercel
 # Run this script: .\set-textsms-env.ps1
 
-$env:TEXTSMS_API_KEY = "5e8a74e0f8eed3e7a9896401a91bc9a2"
+if (-not $env:TEXTSMS_API_KEY) {
+    Write-Host "Set the TEXTSMS_API_KEY env var before running this script." -ForegroundColor Red
+    exit 1
+}
 $env:TEXTSMS_PARTNER_ID = "15957"
 $env:TEXTSMS_SHORTCODE = "TextSMS"
 $env:ADMIN_SMS_PHONE = "0740176944"
@@ -13,7 +16,7 @@ vercel env add --force | Out-Null
 
 Write-Host "Setting TEXTSMS_API_KEY..." -ForegroundColor Yellow
 & vercel env rm TEXTSMS_API_KEY --force 2>$null
-& vercel env add TEXTSMS_API_KEY 2>$null <<<"5e8a74e0f8eed3e7a9896401a91bc9a2"
+& vercel env add TEXTSMS_API_KEY 2>$null <<<"$env:TEXTSMS_API_KEY"
 Write-Host "✅ TEXTSMS_API_KEY set" -ForegroundColor Green
 
 Write-Host "Setting TEXTSMS_PARTNER_ID..." -ForegroundColor Yellow

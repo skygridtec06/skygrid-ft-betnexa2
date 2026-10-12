@@ -203,7 +203,7 @@ If SMS still not working after deployment:
 ```bash
 vercel env list --prod
 # Should show:
-# TEXTSMS_API_KEY=5e8a74e0f8eed3e7a9896401a91bc9a2
+# TEXTSMS_API_KEY=<redacted — see Vercel dashboard, not committed>
 # TEXTSMS_PARTNER_ID=15957
 # TEXTSMS_SHORTCODE=TextSMS
 # ADMIN_SMS_PHONE=0740176944

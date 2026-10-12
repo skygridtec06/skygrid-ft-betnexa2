@@ -1,7 +1,8 @@
 const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = 'https://eaqogmybihiqzivuwyav.supabase.co';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || 'sb_secret_JnzsAy2ljyd__NdzokUXhA_2k7loTgg';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+if (!supabaseServiceKey) throw new Error('SUPABASE_SERVICE_KEY env var is required');
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 

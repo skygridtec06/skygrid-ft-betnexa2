@@ -8,7 +8,8 @@
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.SUPABASE_URL || 'https://eaqogmybihiqzivuwyav.supabase.co';
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY || 'sb_secret_JnzsAy2ljyd__NdzokUXhA_2k7loTgg';
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+if (!supabaseKey) throw new Error('SUPABASE_SERVICE_KEY env var is required');
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 

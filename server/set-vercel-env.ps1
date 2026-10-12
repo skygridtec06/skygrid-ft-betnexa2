@@ -7,8 +7,10 @@ Write-Host ""
 
 # The correct Supabase credentials
 $env:SUPABASE_URL = "https://eaqogmybihiqzivuwyav.supabase.co"
-$env:SUPABASE_ANON_KEY = "sb_publishable_Lc8dQIzND4_qyIbN2EuQrQ_0Ma0OINQ"
-$env:SUPABASE_SERVICE_KEY = "sb_secret_JnzsAy2ljyd__NdzokUXhA_2k7loTgg"
+if (-not $env:SUPABASE_ANON_KEY -or -not $env:SUPABASE_SERVICE_KEY) {
+    Write-Host "Set SUPABASE_ANON_KEY and SUPABASE_SERVICE_KEY env vars before running this script." -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "📋 Setting variables:" -ForegroundColor Green
 Write-Host "   SUPABASE_URL=$env:SUPABASE_URL"
@@ -29,11 +31,11 @@ vercel env add SUPABASE_URL "https://eaqogmybihiqzivuwyav.supabase.co" --prod 2>
 Write-Host ""
 
 Write-Host "Setting SUPABASE_ANON_KEY..."
-vercel env add SUPABASE_ANON_KEY "sb_publishable_Lc8dQIzND4_qyIbN2EuQrQ_0Ma0OINQ" --prod 2>&1
+vercel env add SUPABASE_ANON_KEY $env:SUPABASE_ANON_KEY --prod 2>&1
 Write-Host ""
 
 Write-Host "Setting SUPABASE_SERVICE_KEY..."
-vercel env add SUPABASE_SERVICE_KEY "sb_secret_JnzsAy2ljyd__NdzokUXhA_2k7loTgg" --prod 2>&1
+vercel env add SUPABASE_SERVICE_KEY $env:SUPABASE_SERVICE_KEY --prod 2>&1
 Write-Host ""
 
 Write-Host "Redeploying server with new environment variables..."

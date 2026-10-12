@@ -1,8 +1,9 @@
 const { createClient } = require('@supabase/supabase-js');
 
+if (!process.env.SUPABASE_SERVICE_KEY) throw new Error('SUPABASE_SERVICE_KEY env var is required');
 const supabase = createClient(
   'https://eaqogmybihiqzivuwyav.supabase.co',
-  'sb_secret_JnzsAy2ljyd__NdzokUXhA_2k7loTgg'
+  process.env.SUPABASE_SERVICE_KEY
 );
 
 async function testMarketUpdate() {

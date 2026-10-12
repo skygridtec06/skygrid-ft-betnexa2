@@ -59,8 +59,8 @@ diagnostics: {
 ```
 Backend (.env in /server):
 ✅ SUPABASE_URL=https://eaqogmybihiqzivuwyav.supabase.co
-✅ SUPABASE_SERVICE_KEY=sb_secret_JnzsAy2ljyd__NdzokUXhA_2k7loTgg
-✅ SUPABASE_ANON_KEY=sb_publishable_Lc8dQIzND4_qyIbN2EuQrQ_0Ma0OINQ
+✅ SUPABASE_SERVICE_KEY=<redacted — see server/.env, not committed>
+✅ SUPABASE_ANON_KEY=<redacted — see server/.env, not committed>
 
 Frontend (uses VITE_* variables):
 ✅ VITE_SUPABASE_URL (defaults to same URL)
@@ -201,8 +201,8 @@ curl https://server-tau-puce.vercel.app/api/admin/games
 ### Backend (.env in server/ folder)
 ```
 SUPABASE_URL=https://eaqogmybihiqzivuwyav.supabase.co
-SUPABASE_SERVICE_KEY=sb_secret_JnzsAy2ljyd__NdzokUXhA_2k7loTgg
-SUPABASE_ANON_KEY=sb_publishable_Lc8dQIzND4_qyIbN2EuQrQ_0Ma0OINQ
+SUPABASE_SERVICE_KEY=<redacted — see server/.env, not committed>
+SUPABASE_ANON_KEY=<redacted — see server/.env, not committed>
 NODE_ENV=production
 PORT=5000
 ```
@@ -210,7 +210,7 @@ PORT=5000
 ### Frontend Vercel Environment Variables
 ```
 VITE_SUPABASE_URL=https://eaqogmybihiqzivuwyav.supabase.co
-VITE_SUPABASE_ANON_KEY=sb_publishable_Lc8dQIzND4_qyIbN2EuQrQ_0Ma0OINQ
+VITE_SUPABASE_ANON_KEY=<redacted — see server/.env, not committed>
 VITE_API_URL=https://betnexa-globalback.vercel.app
 ```
 

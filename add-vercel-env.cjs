@@ -17,21 +17,22 @@ console.log('â•‘  Backend: betnexanew2 | Frontend: betnexanew              
 console.log('â•š' + 'â•'.repeat(78) + 'â•');
 
 // BACKEND VARIABLES (for server/.env - deployed to betnexanew2)
+// NOTE: secret values must be supplied via environment variables at runtime, not hardcoded here.
 const backendVars = {
   'PORT': '5000',
   'NODE_ENV': 'production',
   'CALLBACK_URL': 'https://betnexanewbackend.vercel.app/api/callbacks',
   'SUPABASE_URL': 'https://eaqogmybihiqzivuwyav.supabase.co',
-  'SUPABASE_ANON_KEY': 'sb_publishable_Lc8dQIzND4_qyIbN2EuQrQ_0Ma0OINQ',
-  'SUPABASE_SERVICE_KEY': 'sb_secret_JnzsAy2ljyd__NdzokUXhA_2k7loTgg',
-  'DARAJA_TEST_CONSUMER_KEY': '7vMMkeG0t2ACOhlk6TYXNVPkcG0U5cTcaUl8nHVsino5eyqc',
-  'DARAJA_TEST_CONSUMER_SECRET': 'zZEy0bpFMkK1RzeyJoCWEYfOWh3zmr8msB7oaSNnfS46yTwO30Ond7IeuuoTZdIG',
+  'SUPABASE_ANON_KEY': process.env.SUPABASE_ANON_KEY || '',
+  'SUPABASE_SERVICE_KEY': process.env.SUPABASE_SERVICE_KEY || '',
+  'DARAJA_TEST_CONSUMER_KEY': process.env.DARAJA_TEST_CONSUMER_KEY || '',
+  'DARAJA_TEST_CONSUMER_SECRET': process.env.DARAJA_TEST_CONSUMER_SECRET || '',
   'DARAJA_TEST_PARTY_B': '4320291',
-  'DARAJA_TEST_PASSKEY': '582af7323870392b818e0b7661f09700c97c8d313523b0042a971ca7f4948c89',
+  'DARAJA_TEST_PASSKEY': process.env.DARAJA_TEST_PASSKEY || '',
   'DARAJA_TEST_SHORT_CODE': '4320291',
   'DARAJA_TEST_TRANSACTION_TYPE': 'CustomerPayBillOnline',
   'DARAJA_TEST_CALLBACK_BASE_URL': 'https://betnexanewbackend.vercel.app',
-  'TEXTSMS_API_KEY': '5e8a74e0f8eed3e7a9896401a91bc9a2',
+  'TEXTSMS_API_KEY': process.env.TEXTSMS_API_KEY || '',
   'TEXTSMS_PARTNER_ID': '15957',
   'TEXTSMS_SHORTCODE': 'TextSMS',
   'ADMIN_SMS_PHONE': '0740176944'
@@ -43,11 +44,11 @@ if (process.env.API_FOOTBALL_KEY) {
 // FRONTEND VARIABLES (for root .env - deployed to betnexanew)
 const frontendVars = {
   'SUPABASE_URL': 'https://eaqogmybihiqzivuwyav.supabase.co',
-  'SUPABASE_SERVICE_KEY': 'sb_secret_JnzsAy2ljyd__NdzokUXhA_2k7loTgg',
-  'SUPABASE_ANON_KEY': 'sb_publishable_Lc8dQIzND4_qyIbN2EuQrQ_0Ma0OINQ',
+  'SUPABASE_SERVICE_KEY': process.env.SUPABASE_SERVICE_KEY || '',
+  'SUPABASE_ANON_KEY': process.env.SUPABASE_ANON_KEY || '',
   'VITE_API_URL': 'https://betnexanewbackend.vercel.app',
   'SERVER_PUBLIC_URL': 'https://betnexanewbackend.vercel.app',
-  'TEXTSMS_API_KEY': '5e8a74e0f8eed3e7a9896401a91bc9a2',
+  'TEXTSMS_API_KEY': process.env.TEXTSMS_API_KEY || '',
   'TEXTSMS_PARTNER_ID': '15957',
   'TEXTSMS_SHORTCODE': 'TextSMS',
   'ADMIN_SMS_PHONE': '0740176944'

@@ -2,7 +2,8 @@ const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL || 'https://eaqogmybihiqzivuwyav.supabase.co';
 const supabaseKey = process.env.SUPABASE_ANON_KEY || 'sb_publishable_Lc8dQIzND4_qyIbN2EuQrQ_0Ma0OINQ';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || 'sb_secret_JnzsAy2ljyd__NdzokUXhA_2k7loTgg';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+if (!supabaseServiceKey) throw new Error('SUPABASE_SERVICE_KEY env var is required');
 
 console.log('\n🔍 SUPABASE HEALTH DIAGNOSTIC REPORT');
 console.log('═'.repeat(50));

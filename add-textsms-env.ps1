@@ -6,7 +6,7 @@
 $ErrorActionPreference = "SilentlyContinue"
 
 $vars = @(
-    @{ name = "TEXTSMS_API_KEY"; value = "5e8a74e0f8eed3e7a9896401a91bc9a2"; sensitive = $true },
+    @{ name = "TEXTSMS_API_KEY"; value = $env:TEXTSMS_API_KEY; sensitive = $true },
     @{ name = "TEXTSMS_PARTNER_ID"; value = "15957"; sensitive = $false },
     @{ name = "TEXTSMS_SHORTCODE"; value = "TextSMS"; sensitive = $false },
     @{ name = "ADMIN_SMS_PHONE"; value = "0740176944"; sensitive = $false }
