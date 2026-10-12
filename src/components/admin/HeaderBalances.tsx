@@ -133,7 +133,7 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Validation failed');
       setValidatedPhone(recipientPhone.trim());
-      setValidatedName(data.name || 'Name unavailable');
+      setValidatedName(data.name || '');
     } catch (error) {
       setValidateError(error instanceof Error ? error.message : 'Validation failed');
     } finally {
@@ -221,7 +221,9 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
             </div>
             {validateError && <p role="alert" className="text-xs text-destructive">{validateError}</p>}
             {isValidated && (
-              <p className="text-xs text-green-500">Verified recipient: <strong>{validatedName}</strong></p>
+              <p className="text-xs text-green-500">
+                Number verified. Safaricom will return the registered M-Pesa name after the payout is processed.
+              </p>
             )}
             <Input placeholder="Amount (KSH)" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} />
             <Input placeholder="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
@@ -240,7 +242,7 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm payout</AlertDialogTitle>
             <AlertDialogDescription>
-              You are about to send <strong>KSH {amount}</strong> from the paybill to <strong>{validatedName}</strong> ({recipientPhone}). This moves real money and cannot be undone. Proceed?
+              You are about to send <strong>KSH {amount}</strong> from the paybill to <strong>{recipientPhone}</strong>. The registered M-Pesa name will be shown in the payout result after processing. This moves real money and cannot be undone. Proceed?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

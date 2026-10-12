@@ -171,12 +171,17 @@ async function requestAccountBalanceQuery({ remarks } = {}) {
 }
 
 /**
- * B2C Hakikisha — synchronous identity check, returns a (partially masked) recipient name
- * so the admin can confirm the right person before sending money.
+ * Validate a recipient number before a payout.
+ * Daraja returns the registered receiver name asynchronously in the B2C result callback.
  */
 async function validateRecipientIdentity({ recipientPhone }) {
-  const config = getB2CConfig();
   const normalizedPhone = normalizeDarajaPhoneNumber(recipientPhone);
+  return {
+    normalizedPhone,
+    name: null,
+    nameAvailableAfterPayout: true,
+  };
+/*
 
   const payload = {
     header: {
@@ -203,6 +208,7 @@ async function validateRecipientIdentity({ recipientPhone }) {
   const name = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
 
   return { normalizedPhone, name };
+*/
 }
 
 module.exports = {

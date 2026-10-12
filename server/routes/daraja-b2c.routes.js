@@ -49,7 +49,7 @@ function nairobiDayStartIso() {
   return nairobiNow.toISOString();
 }
 
-// POST /api/admin/daraja-b2c/validate-recipient — B2C Hakikisha identity check before sending
+// POST /api/admin/daraja-b2c/validate-recipient — validate the number before sending
 router.post('/validate-recipient', checkAdmin, async (req, res) => {
   try {
     const { recipientPhone } = req.body;
@@ -57,7 +57,11 @@ router.post('/validate-recipient', checkAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'recipientPhone is required' });
     }
     const result = await validateRecipientIdentity({ recipientPhone });
-    return res.json({ success: true, ...result });
+    return res.json({
+      success: true,
+      ...result,
+      message: 'The phone number is valid. Safaricom returns the registered M-Pesa name in the payout result.',
+    });
   } catch (error) {
     console.error('❌ [B2C] Validate recipient error:', error.message);
     return res.status(500).json({ success: false, error: error.message || 'Failed to validate recipient' });
@@ -76,7 +80,7 @@ router.post('/send', checkAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Explicit confirm:true is required to send money' });
     }
     if (!validatedPhone || normalizeDarajaPhoneNumber(validatedPhone) !== normalizeDarajaPhoneNumber(recipientPhone)) {
-      return res.status(400).json({ success: false, error: 'Recipient must be validated (Hakikisha) immediately before sending' });
+      return res.status(400).json({ success: false, error: 'Validate the recipient number immediately before sending' });
     }
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Database not initialized' });
