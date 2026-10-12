@@ -6,8 +6,18 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../services/database');
+const { getSmsBalance } = require('../services/smsService');
 
 const DAY_MS = 86400000;
+
+// Env vars whose presence (not value) is reported in the health section
+const REQUIRED_ENV_VARS = [
+  'SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'SUPABASE_ANON_KEY',
+  'THE_ODDS_API_KEY', 'API_FOOTBALL_KEY',
+  'TEXTSMS_API_KEY', 'TEXTSMS_PARTNER_ID',
+  'DARAJA_TEST_CONSUMER_KEY', 'DARAJA_TEST_CONSUMER_SECRET', 'DARAJA_TEST_PASSKEY',
+  'SERVER_PUBLIC_URL', 'CORS_ORIGINS',
+];
 
 // Normalize phone to different formats and try matching in DB
 function normalizePhoneVariants(phone) {
@@ -157,6 +167,7 @@ router.get('/overview', checkAdmin, async (req, res) => {
       signupsLast30Q,
       bannedQ,
       activatedQ,
+      totalStakedUsersQ,
       totalBetsQ,
       betsTodayQ,
       betsOpenQ,
@@ -173,6 +184,10 @@ router.get('/overview', checkAdmin, async (req, res) => {
       paymentsPendingQ,
       c2bTotalQ,
       c2bUnresolvedQ,
+      totalGamesQ,
+      upcomingGamesQ,
+      liveGamesQ,
+      finishedGamesQ,
     ] = await Promise.all([
       countQuery('users'),
       countQuery('users', [{ op: 'gte', col: 'created_at', val: todayStart }, { op: 'lte', col: 'created_at', val: todayEnd }]),
@@ -180,6 +195,7 @@ router.get('/overview', checkAdmin, async (req, res) => {
       countQuery('users', [{ op: 'gte', col: 'created_at', val: thirtyDaysAgoIso }]),
       countQuery('users', [{ op: 'eq', col: 'is_banned', val: true }]),
       countQuery('users', [{ op: 'eq', col: 'withdrawal_activated', val: true }]),
+      countQuery('users', [{ op: 'gt', col: 'total_bets', val: 0 }]),
       countQuery('bets'),
       countQuery('bets', [{ op: 'gte', col: 'created_at', val: todayStart }, { op: 'lte', col: 'created_at', val: todayEnd }]),
       countQuery('bets', [{ op: 'eq', col: 'status', val: 'Open' }]),
@@ -196,6 +212,10 @@ router.get('/overview', checkAdmin, async (req, res) => {
       countQuery('payments', [{ op: 'eq', col: 'status', val: 'Pending' }, { op: 'gte', col: 'created_at', val: thirtyDaysAgoIso }]),
       countQuery('c2b_mismatches'),
       countQuery('c2b_mismatches', [{ op: 'is', col: 'resolved_at', val: null }]),
+      countQuery('games'),
+      countQuery('games', [{ op: 'eq', col: 'status', val: 'upcoming' }]),
+      countQuery('games', [{ op: 'eq', col: 'status', val: 'live' }]),
+      countQuery('games', [{ op: 'eq', col: 'status', val: 'finished' }]),
     ]);
 
     const dbLatencyMs = Date.now() - dbTimerStart;
@@ -222,6 +242,11 @@ router.get('/overview', checkAdmin, async (req, res) => {
     const paymentsPending = extractCount(paymentsPendingQ, 'paymentsPending', warnings);
     const c2bTotal = extractCount(c2bTotalQ, 'c2bTotal', warnings);
     const c2bUnresolved = extractCount(c2bUnresolvedQ, 'c2bUnresolved', warnings);
+    const totalStakedUsers = extractCount(totalStakedUsersQ, 'totalStakedUsers', warnings);
+    const totalGames = extractCount(totalGamesQ, 'totalGames', warnings);
+    const upcomingGames = extractCount(upcomingGamesQ, 'upcomingGames', warnings);
+    const liveGames = extractCount(liveGamesQ, 'liveGames', warnings);
+    const finishedGames = extractCount(finishedGamesQ, 'finishedGames', warnings);
 
     // Signup trend: last 30 days, grouped by Nairobi calendar day (bounded fetch — new users only)
     let signupTrend = [];
@@ -240,16 +265,14 @@ router.get('/overview', checkAdmin, async (req, res) => {
       warnings.push(`signupTrend: ${trendError.message}`);
     }
 
-    // Daily conversion funnel (the 3 requested pies) for the selected/target date
-    let cohortSize = 0, cohortStaked = 0, cohortActivated = 0;
+    // Daily signup composition pie — for the selected/target date
+    let cohortSize = 0;
     try {
-      const cohort = await fetchAll('users', 'id, withdrawal_activated, total_bets', [
+      const cohort = await fetchAll('users', 'id', [
         { op: 'gte', col: 'created_at', val: targetStart },
         { op: 'lte', col: 'created_at', val: targetEnd },
       ]);
       cohortSize = cohort.length;
-      cohortStaked = cohort.filter((u) => parseFloat(u.total_bets || 0) > 0).length;
-      cohortActivated = cohort.filter((u) => u.withdrawal_activated === true).length;
     } catch (cohortError) {
       warnings.push(`dailyFunnel: ${cohortError.message}`);
     }
@@ -262,6 +285,60 @@ router.get('/overview', checkAdmin, async (req, res) => {
       avgStakeLast30Days = recentBets.length ? totalStakeLast30Days / recentBets.length : 0;
     } catch (stakeError) {
       warnings.push(`stakeVolume: ${stakeError.message}`);
+    }
+
+    // Earning rates (last 30 days) — same deposit/activation/priority classification as /api/admin/earnings
+    let financials = {
+      windowDays: 30,
+      totalDeposits: 0, totalActivationFees: 0, totalPriorityFees: 0, masterTotal: 0,
+      depositCount: 0, activationFeeCount: 0, priorityFeeCount: 0,
+    };
+    try {
+      const [recentTransactions, recentActivationFees] = await Promise.all([
+        fetchAll('transactions', 'amount', [
+          { op: 'eq', col: 'type', val: 'deposit' },
+          { op: 'eq', col: 'status', val: 'completed' },
+          { op: 'gte', col: 'created_at', val: thirtyDaysAgoIso },
+        ]),
+        fetchAll('activation_fees', 'amount', [
+          { op: 'eq', col: 'status', val: 'completed' },
+          { op: 'gte', col: 'created_at', val: thirtyDaysAgoIso },
+        ]),
+      ]);
+      const deposits = [], activationAmounts = [], priorityAmounts = [];
+      for (const row of [...recentTransactions, ...recentActivationFees]) {
+        const amt = parseFloat(row.amount || 0);
+        if (amt === 1000) activationAmounts.push(amt);
+        else if (amt === 399) priorityAmounts.push(amt);
+        else deposits.push(amt);
+      }
+      const totalDeposits = deposits.reduce((sum, a) => sum + a, 0);
+      const totalActivationFees = activationAmounts.reduce((sum, a) => sum + a, 0);
+      const totalPriorityFees = priorityAmounts.reduce((sum, a) => sum + a, 0);
+      financials = {
+        windowDays: 30,
+        totalDeposits: Math.round(totalDeposits),
+        totalActivationFees: Math.round(totalActivationFees),
+        totalPriorityFees: Math.round(totalPriorityFees),
+        masterTotal: Math.round(totalDeposits + totalActivationFees + totalPriorityFees),
+        depositCount: deposits.length,
+        activationFeeCount: activationAmounts.length,
+        priorityFeeCount: priorityAmounts.length,
+      };
+    } catch (financialsError) {
+      warnings.push(`financials: ${financialsError.message}`);
+    }
+
+    // Service/config health — never exposes secret values, only presence flags
+    const envStatus = {};
+    for (const key of REQUIRED_ENV_VARS) {
+      envStatus[key] = !!(process.env[key] && String(process.env[key]).trim());
+    }
+    let smsBalance = { success: false, error: 'not checked' };
+    try {
+      smsBalance = await getSmsBalance();
+    } catch (smsError) {
+      smsBalance = { success: false, error: smsError.message };
     }
 
     const mem = process.memoryUsage();
@@ -278,25 +355,26 @@ router.get('/overview', checkAdmin, async (req, res) => {
         bannedCount,
         activatedCount,
         activationRatePct: ratePct(activatedCount, totalUsers),
+        totalStakedUsers,
+        stakedRatePct: ratePct(totalStakedUsers, totalUsers),
       },
       signupTrend,
       dailyFunnel: {
         date: targetDate,
         cohortSize,
-        cohortStaked,
-        cohortActivated,
         pies: {
           signupComposition: [
             { name: `Signed up ${targetDate}`, value: cohortSize },
             { name: 'Rest of user base', value: Math.max(totalUsers - cohortSize, 0) },
           ],
+          // Based on the full user base, not just the selected day's signups
           signupToStaked: [
-            { name: 'Staked', value: cohortStaked },
-            { name: 'Not staked yet', value: Math.max(cohortSize - cohortStaked, 0) },
+            { name: 'Staked', value: totalStakedUsers },
+            { name: 'Not staked yet', value: Math.max(totalUsers - totalStakedUsers, 0) },
           ],
           signupToActivated: [
-            { name: 'Activated', value: cohortActivated },
-            { name: 'Not activated', value: Math.max(cohortSize - cohortActivated, 0) },
+            { name: 'Activated', value: activatedCount },
+            { name: 'Not activated', value: Math.max(totalUsers - activatedCount, 0) },
           ],
         },
       },
@@ -319,6 +397,17 @@ router.get('/overview', checkAdmin, async (req, res) => {
         payments: { success: paymentsSuccess, failed: paymentsFailed, pending: paymentsPending, failureRatePct: ratePct(paymentsFailed, paymentsSuccess + paymentsFailed + paymentsPending) },
         c2bMismatches: { total: c2bTotal, unresolved: c2bUnresolved },
         notes: ['SMS delivery failure rate is not tracked — no persistence exists for SMS send outcomes.'],
+      },
+      financials,
+      games: {
+        totalGames,
+        upcomingGames,
+        liveGames,
+        finishedGames,
+      },
+      health: {
+        envConfigured: envStatus,
+        smsBalance,
       },
       webPerformance: {
         snapshot: true,

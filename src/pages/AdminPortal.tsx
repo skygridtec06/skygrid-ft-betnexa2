@@ -2438,6 +2438,13 @@ const AdminPortal = () => {
     }
   };
 
+  // Fetch proactively (not just when the Balances tab is opened) so the low-balance indicator is visible right away
+  useEffect(() => {
+    if (loggedInUser?.phone && smsBalance === null && !loadingSmsBalance) {
+      void fetchSmsBalance();
+    }
+  }, [loggedInUser?.phone]);
+
   const searchC2bRecipients = async (mismatchId: string) => {
     const query = (c2bUserQueries[mismatchId] || "").trim();
     if (query.length < 2) {
@@ -3047,8 +3054,11 @@ const AdminPortal = () => {
             <TabsTrigger value="c2b" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <AlertCircle className="mr-1 h-4 w-4" /> C2B
             </TabsTrigger>
-            <TabsTrigger value="balances" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <TabsTrigger value="balances" className="relative data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Wallet className="mr-1 h-4 w-4" /> Balances
+              {smsBalance !== null && smsBalance < 1000 && (
+                <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
+              )}
             </TabsTrigger>
             <TabsTrigger value="statistics" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <PieChart className="mr-1 h-4 w-4" /> Statistics

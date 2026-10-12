@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { buildApiUrl } from '@/lib/api';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw, Download, CheckCircle2, XCircle } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
@@ -59,6 +59,66 @@ export const StatisticsDashboard = ({ adminPhone }: StatisticsDashboardProps) =>
     }
   };
 
+  const handleGenerateReport = () => {
+    if (!data) return;
+    const { clients, betting, failureRates, financials, games, health, webPerformance } = data;
+    const lines: string[] = [];
+    lines.push('BETNEXA STATISTICS REPORT');
+    lines.push(`Generated At,${data.generatedAt}`);
+    lines.push(`Selected Date,${data.selectedDate}`);
+    lines.push('');
+    lines.push('CLIENTS');
+    lines.push('Metric,Value');
+    lines.push(`Total Users,${clients.totalUsers}`);
+    lines.push(`Signups Today,${clients.signupsToday}`);
+    lines.push(`Signups Last 7 Days,${clients.signupsLast7Days}`);
+    lines.push(`Signups Last 30 Days,${clients.signupsLast30Days}`);
+    lines.push(`Banned Users,${clients.bannedCount}`);
+    lines.push(`Activated Users,${clients.activatedCount} (${clients.activationRatePct}%)`);
+    lines.push(`Staked Users,${clients.totalStakedUsers} (${clients.stakedRatePct}%)`);
+    lines.push('');
+    lines.push('BETTING');
+    lines.push(`Total Bets,${betting.totalBets}`);
+    lines.push(`Bets Today,${betting.betsToday}`);
+    lines.push(`Total Stake (30d),KSH ${betting.totalStakeLast30Days}`);
+    lines.push(`Average Stake (30d),KSH ${betting.avgStakeLast30Days}`);
+    lines.push('');
+    lines.push('EARNINGS (Last 30 Days)');
+    lines.push(`Deposits,KSH ${financials.totalDeposits} (${financials.depositCount} transactions)`);
+    lines.push(`Activation Fees,KSH ${financials.totalActivationFees} (${financials.activationFeeCount} transactions)`);
+    lines.push(`Priority Fees,KSH ${financials.totalPriorityFees} (${financials.priorityFeeCount} transactions)`);
+    lines.push(`Master Total,KSH ${financials.masterTotal}`);
+    lines.push('');
+    lines.push('GAMES');
+    lines.push(`Total Games,${games.totalGames}`);
+    lines.push(`Upcoming,${games.upcomingGames}`);
+    lines.push(`Live,${games.liveGames}`);
+    lines.push(`Finished,${games.finishedGames}`);
+    lines.push('');
+    lines.push('FAILURE RATES (Last 30 Days)');
+    lines.push(`Deposits,${failureRates.deposits.failureRatePct}% failed (${failureRates.deposits.completed} ok / ${failureRates.deposits.failed} failed)`);
+    lines.push(`Activation Fees,${failureRates.activationFees.failureRatePct}% failed (${failureRates.activationFees.completed} ok / ${failureRates.activationFees.failed} failed)`);
+    lines.push(`Priority Fees,${failureRates.priorityFees.failureRatePct}% failed (${failureRates.priorityFees.completed} ok / ${failureRates.priorityFees.failed} failed)`);
+    lines.push(`Payments,${failureRates.payments.failureRatePct}% failed (${failureRates.payments.success} ok / ${failureRates.payments.failed} failed / ${failureRates.payments.pending} pending)`);
+    lines.push(`C2B Mismatches,${failureRates.c2bMismatches.unresolved} unresolved of ${failureRates.c2bMismatches.total}`);
+    lines.push('');
+    lines.push('SERVICE HEALTH');
+    Object.entries(health.envConfigured).forEach(([key, configured]) => {
+      lines.push(`${key},${configured ? 'Configured' : 'MISSING'}`);
+    });
+    lines.push(`TextSMS Balance,${health.smsBalance.success ? health.smsBalance.balance : `Unavailable (${health.smsBalance.error})`}`);
+    lines.push(`Server Uptime (s),${webPerformance.uptimeSeconds}`);
+    lines.push(`DB Latency (ms),${webPerformance.dbLatencyMs}`);
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `statistics-report-${data.selectedDate}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
   if (loading && !data) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -79,7 +139,7 @@ export const StatisticsDashboard = ({ adminPhone }: StatisticsDashboardProps) =>
     return <Card className="p-4 text-center text-muted-foreground">No data available</Card>;
   }
 
-  const { clients, signupTrend, dailyFunnel, betting, failureRates, webPerformance } = data;
+  const { clients, signupTrend, dailyFunnel, betting, failureRates, financials, games, health, webPerformance } = data;
 
   return (
     <div className="space-y-6">
@@ -95,6 +155,10 @@ export const StatisticsDashboard = ({ adminPhone }: StatisticsDashboardProps) =>
           <Button variant="outline" size="sm" onClick={() => fetchStatistics(selectedDate)} disabled={loading}>
             <RefreshCw className={`mr-1 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             {loading ? 'Loading...' : 'Refresh'}
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleGenerateReport}>
+            <Download className="mr-1 h-4 w-4" />
+            Generate Report
           </Button>
         </div>
       </div>
@@ -160,7 +224,7 @@ export const StatisticsDashboard = ({ adminPhone }: StatisticsDashboardProps) =>
         </Card>
 
         <Card className="border-border bg-card p-4">
-          <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Signup → Staked ({dailyFunnel.cohortSize})</p>
+          <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total Users → Staked ({clients.totalUsers})</p>
           <ResponsiveContainer width="100%" height={250}>
             <PieChart>
               <Pie
@@ -183,7 +247,7 @@ export const StatisticsDashboard = ({ adminPhone }: StatisticsDashboardProps) =>
         </Card>
 
         <Card className="border-border bg-card p-4">
-          <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Signup → Activated ({dailyFunnel.cohortSize})</p>
+          <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total Users → Activated ({clients.totalUsers})</p>
           <ResponsiveContainer width="100%" height={250}>
             <PieChart>
               <Pie
@@ -335,6 +399,79 @@ export const StatisticsDashboard = ({ adminPhone }: StatisticsDashboardProps) =>
                 </p>
               ))}
             </div>
+          )}
+        </div>
+      </Card>
+
+      {/* Earning Rates */}
+      <Card className="border-border bg-card p-4">
+        <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Earning Rates (Last {financials.windowDays} Days)</p>
+        <div className="grid gap-4 md:grid-cols-4">
+          <div>
+            <p className="text-sm text-muted-foreground">Deposits</p>
+            <p className="text-xl font-bold text-foreground">KSH {financials.totalDeposits.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground">{financials.depositCount} transactions</p>
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Activation Fees</p>
+            <p className="text-xl font-bold text-foreground">KSH {financials.totalActivationFees.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground">{financials.activationFeeCount} transactions</p>
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Priority Fees</p>
+            <p className="text-xl font-bold text-foreground">KSH {financials.totalPriorityFees.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground">{financials.priorityFeeCount} transactions</p>
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Master Total</p>
+            <p className="text-xl font-bold text-gold">KSH {financials.masterTotal.toLocaleString()}</p>
+          </div>
+        </div>
+      </Card>
+
+      {/* Games / Platform Activity */}
+      <Card className="border-border bg-card p-4">
+        <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Games</p>
+        <div className="grid gap-4 md:grid-cols-4">
+          <div>
+            <p className="text-sm text-muted-foreground">Total Games</p>
+            <p className="text-xl font-bold text-foreground">{games.totalGames.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Upcoming</p>
+            <p className="text-xl font-bold text-foreground">{games.upcomingGames.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Live</p>
+            <p className="text-xl font-bold text-foreground">{games.liveGames.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Finished</p>
+            <p className="text-xl font-bold text-foreground">{games.finishedGames.toLocaleString()}</p>
+          </div>
+        </div>
+      </Card>
+
+      {/* Service Health */}
+      <Card className="border-border bg-card p-4">
+        <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Service Health</p>
+        <div className="grid gap-2 md:grid-cols-3">
+          {Object.entries(health.envConfigured).map(([key, configured]) => (
+            <div key={key} className="flex items-center gap-2 text-xs">
+              {configured ? (
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
+              ) : (
+                <XCircle className="h-4 w-4 shrink-0 text-destructive" />
+              )}
+              <span className={configured ? 'text-foreground' : 'text-destructive'}>{key}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 border-t border-border pt-3 text-xs text-muted-foreground">
+          {health.smsBalance.success ? (
+            <p>TextSMS balance: <span className="font-semibold text-foreground">{health.smsBalance.balance?.toLocaleString()}</span></p>
+          ) : (
+            <p className="text-destructive">TextSMS balance unavailable ({health.smsBalance.error})</p>
           )}
         </div>
       </Card>
