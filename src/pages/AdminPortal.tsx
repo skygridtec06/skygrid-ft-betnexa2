@@ -21,7 +21,8 @@ import { MatchEventEditor } from "@/components/MatchEventEditor";
 import { ActiveMembers } from "@/components/ActiveMembers";
 import { FetchGamesFetchModal } from "@/components/FetchGamesFetchModal";
 import { StatisticsDashboard } from "@/components/admin/StatisticsDashboard";
-import { B2CPaybillPanel } from "@/components/admin/B2CPaybillPanel";
+import { HeaderBalances } from "@/components/admin/HeaderBalances";
+import { SpendingsPanel } from "@/components/admin/SpendingsPanel";
 import { EarningsCalculator } from "@/components/EarningsCalculator";
 import { buildApiUrl } from "@/lib/api";
 
@@ -410,9 +411,6 @@ const AdminPortal = () => {
   const [c2bResolvingMismatchId, setC2bResolvingMismatchId] = useState<string | null>(null);
   const [c2bResolutionMessages, setC2bResolutionMessages] = useState<Record<string, string>>({});
   const [activationFees, setActivationFees] = useState<any[]>([]);
-  const [smsBalance, setSmsBalance] = useState<number | null>(null);
-  const [loadingSmsBalance, setLoadingSmsBalance] = useState(false);
-  const [smsBalanceError, setSmsBalanceError] = useState("");
   
   // User balance editing state
   const [editingBalance, setEditingBalance] = useState<string | null>(null);
@@ -2416,36 +2414,6 @@ const AdminPortal = () => {
     }
   };
 
-  const fetchSmsBalance = async () => {
-    const phone = loggedInUser?.phone || '';
-    if (!phone) {
-      setSmsBalanceError("User phone not available");
-      return;
-    }
-    setLoadingSmsBalance(true);
-    setSmsBalanceError("");
-    try {
-      const response = await fetch(buildApiUrl(`/api/admin/sms-balance?phone=${encodeURIComponent(phone)}`));
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to load SMS balance');
-      }
-      setSmsBalance(typeof data.balance === 'number' ? data.balance : null);
-    } catch (error) {
-      console.error("Failed to fetch SMS balance:", error);
-      setSmsBalanceError(error instanceof Error ? error.message : 'Failed to load SMS balance');
-    } finally {
-      setLoadingSmsBalance(false);
-    }
-  };
-
-  // Fetch proactively (not just when the Balances tab is opened) so the low-balance indicator is visible right away
-  useEffect(() => {
-    if (loggedInUser?.phone && smsBalance === null && !loadingSmsBalance) {
-      void fetchSmsBalance();
-    }
-  }, [loggedInUser?.phone]);
-
   const searchC2bRecipients = async (mismatchId: string) => {
     const query = (c2bUserQueries[mismatchId] || "").trim();
     if (query.length < 2) {
@@ -2568,11 +2536,6 @@ const AdminPortal = () => {
     if (tab === "c2b" && !loadedAdminTabsRef.current.has(tab)) {
       loadedAdminTabsRef.current.add(tab);
       void fetchC2bMismatches();
-    }
-
-    if (tab === "balances" && !loadedAdminTabsRef.current.has(tab)) {
-      loadedAdminTabsRef.current.add(tab);
-      void fetchSmsBalance();
     }
 
     if (tab === "bets" && !loadedAdminTabsRef.current.has(tab)) {
@@ -2939,6 +2902,7 @@ const AdminPortal = () => {
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">Manage games, users, and withdrawals</p>
           </div>
+          <HeaderBalances adminPhone={loggedInUser?.phone || ""} />
           <Button variant="hero" size="sm" onClick={() => setShowDarajaTestModal(true)}>
             <ArrowDown className="mr-2 h-4 w-4" /> Test STK Push
           </Button>
@@ -3055,11 +3019,8 @@ const AdminPortal = () => {
             <TabsTrigger value="c2b" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <AlertCircle className="mr-1 h-4 w-4" /> C2B
             </TabsTrigger>
-            <TabsTrigger value="balances" className="relative data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Wallet className="mr-1 h-4 w-4" /> Balances
-              {smsBalance !== null && smsBalance < 1000 && (
-                <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
-              )}
+            <TabsTrigger value="balances" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <DollarSign className="mr-1 h-4 w-4" /> Spendings
             </TabsTrigger>
             <TabsTrigger value="statistics" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <PieChart className="mr-1 h-4 w-4" /> Statistics
@@ -5443,30 +5404,7 @@ const AdminPortal = () => {
           </TabsContent>
 
           <TabsContent value="balances" className="space-y-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-display text-sm font-bold uppercase tracking-wider text-foreground">Service Balances</h3>
-              <Button variant="outline" size="sm" onClick={fetchSmsBalance} disabled={loadingSmsBalance}>
-                <RefreshCw className={`mr-1 h-4 w-4 ${loadingSmsBalance ? "animate-spin" : ""}`} />
-                {loadingSmsBalance ? "Refreshing..." : "Refresh"}
-              </Button>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <Card className="border-border bg-card p-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">TextSMS Units Remaining</p>
-                  <Wallet className="h-5 w-5 text-primary opacity-60" />
-                </div>
-                {loadingSmsBalance ? (
-                  <p className="mt-2 text-sm text-muted-foreground">Loading...</p>
-                ) : smsBalanceError ? (
-                  <p role="alert" className="mt-2 text-xs text-destructive">{smsBalanceError}</p>
-                ) : (
-                  <p className="mt-2 text-2xl font-bold text-foreground">{smsBalance !== null ? smsBalance.toLocaleString() : "—"}</p>
-                )}
-                <p className="mt-1 text-xs text-muted-foreground">TextSMS Kenya SMS credit balance.</p>
-              </Card>
-              <B2CPaybillPanel adminPhone={loggedInUser?.phone || ""} />
-            </div>
+            <SpendingsPanel adminPhone={loggedInUser?.phone || ""} />
           </TabsContent>
 
           <TabsContent value="statistics" className="space-y-6">
