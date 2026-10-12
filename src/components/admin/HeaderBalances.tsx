@@ -190,8 +190,8 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
             <Send className="mr-1 h-4 w-4" /> Send Money
           </Button>
         </DialogTrigger>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:p-6">
+          <DialogHeader className="text-center sm:text-left">
             <DialogTitle>Send Money (B2C Payout)</DialogTitle>
             <DialogDescription>Sends real money from the paybill to the recipient's M-Pesa number.</DialogDescription>
           </DialogHeader>
@@ -222,8 +222,8 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
           setPinError('');
         }
       }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
+        <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:p-6">
+          <AlertDialogHeader className="text-center sm:text-left">
             <AlertDialogTitle>Confirm payout</AlertDialogTitle>
             <AlertDialogDescription>
               You are about to send <strong>KSH {amount}</strong> from the paybill to <strong>{recipientPhone}</strong>. Enter the six-digit admin PIN to authorize this real-money payment.
@@ -231,10 +231,12 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
           </AlertDialogHeader>
           <div className="space-y-2">
             <Input
+              className="text-center text-lg tracking-[0.5em]"
               type="password"
               inputMode="numeric"
               autoComplete="one-time-code"
               maxLength={6}
+              pattern="[0-9]*"
               placeholder="6-digit admin PIN"
               value={adminPin}
               onChange={(e) => {
@@ -245,12 +247,12 @@ export const HeaderBalances = ({ adminPhone }: { adminPhone: string }) => {
             />
             {pinError && <p role="alert" className="text-xs text-destructive">{pinError}</p>}
           </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <AlertDialogCancel className="mt-0 w-full sm:w-auto">Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={(event) => {
               event.preventDefault();
               void confirmSend();
-            }} disabled={sending || adminPin.length !== 6}>
+            }} disabled={sending || adminPin.length !== 6} className="w-full sm:w-auto">
               {sending ? 'Sending...' : 'Confirm & Send'}
             </AlertDialogAction>
           </AlertDialogFooter>
